@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Barcode Reader Test</title>
+    <style>
+        body { font-family: system-ui; background: #0e1117; color: #e6edf3; padding: 20px; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 20px; }
+        .card { background: #161b22; border: 1px solid #30363d; border-radius: 12px; padding: 16px; }
+        .card h3 { margin: 0 0 8px; color: #58a6ff; font-size: 14px; }
+        .card canvas, .card svg { display: block; margin: 0 auto 12px; background: #fff; border-radius: 6px; padding: 8px; }
+        .result { font-size: 12px; padding: 8px; border-radius: 6px; margin-top: 8px; }
+        .pass { background: #0d1117; border: 1px solid #238636; color: #3fb950; }
+        .fail { background: #0d1117; border: 1px solid #da3633; color: #f85149; }
+        .pending { background: #0d1117; border: 1px solid #30363d; color: #8b949e; }
+        button { background: #238636; color: #fff; border: none; padding: 10px 24px; border-radius: 8px; cursor: pointer; font-size: 14px; font-weight: 600; margin: 20px 0; }
+        button:hover { background: #2ea043; }
+        h1 { color: #58a6ff; }
+        .summary { font-size: 16px; padding: 16px; background: #161b22; border-radius: 12px; margin-bottom: 20px; border: 1px solid #30363d; }
+    </style>
+</head>
+<body>
+    <h1>🔬 Barcode Reader Test Suite</h1>
+    <div class="summary" id="summary">Klik "Run All Tests" untuk mulai...</div>
+    <button onclick="runAllTests()">▶ Run All Tests</button>
+
+    <div class="grid" id="grid"></div>
+
+    <!-- JsBarcode for generating test barcodes -->
+    <script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+    <!-- czQR for reading -->
+    <script src="czQR.min.js"></script>
+    <script>
+        const tests = [
+            { format: 'EAN13', jsFormat: 'EAN13', data: '5901234123457', label: 'EAN-13 (Product)' },
+            { format: 'EAN13', jsFormat: 'EAN13', data: '4006381333931', label: 'EAN-13 (Product #2)' },
+            { format: 'EAN13', jsFormat: 'EAN13', data: '9788175257665', label: 'EAN-13 (ISBN)' },
+            { format: 'EAN8', jsFormat: 'EAN8', data: '96385074', label: 'EAN-8' },
+            { format: 'EAN8', jsFormat: 'EAN8', data: '55123457', label: 'EAN-8 #2' },
+            { format: 'UPCA', jsFormat: 'UPC', data: '036000291452', label: 'UPC-A' },
+            { format: 'UPCA', jsFormat: 'UPC', data: '012345678905', label: 'UPC-A #2' },
+            { format: 'CODE128', jsFormat: 'CODE128', data: 'Hello World!', label: 'Code-128 (Text)' },
+            { format: 'CODE128', jsFormat: 'CODE128', data: 'ABC-12345', label: 'Code-128 (Alphanumeric)' },
+            { format: 'CODE128', jsFormat: 'CODE128', data: '1234567890', label: 'Code-128 (Numeric)' },
+            { format: 'CODE39', jsFormat: 'CODE39', data: 'HELLO', label: 'Code-39 (Alpha)' },
+            { format: 'CODE39', jsFormat: 'CODE39', data: 'ABC-1234', label: 'Code-39 (Mixed)' },
+            { format: 'ITF', jsFormat: 'ITF', data: '1234567890', label: 'ITF (Interleaved 2of5)' },
+            { format: 'ITF', jsFormat: 'ITF14', data: '98765432109213', label: 'ITF-14' },
+            { format: 'CODE128', jsFormat: 'CODE128', data: 'SHIP-2024-0042', label: 'Code-128 (Shipping)' },
+            { format: 'EAN14', jsFormat: 'ITF14', data: '98765432109213', label: 'EAN-14 / ITF-14' },
+        ];
+
+        const grid = document.getElementById('grid');
+
+        // Generate all barcode cards
+        tests.forEach((t, i) => {
+            const card = document.createElement('div');
+            card.className = 'card';
+            card.innerHTML = `
+                <h3>${t.label}</h3>
+                <svg id="bc-${i}"></svg>
+                <div>Expected: <code>${t.data}</code></div>
+                <div class="result pending" id="res-${i}">⏳ Waiting...</div>
+            `;
+            grid.appendChild(card);
+
+            try {
+                JsBarcode(`#bc-${i}`, t.data, {
+                    format: t.jsFormat,
+                    width: 2,
+                    height: 80,
+                    displayValue: true,
+                    fontSize: 14,
+                    margin: 10,
+                    background: '#ffffff',
+                    lineColor: '#000000'
+                });
+            } catch (e) {
+                document.getElementById(`res-${i}`).innerHTML = `❌ Generate error: ${e.message}`;
+                document.getElementById(`res-${i}`).className = 'result fail';
+            }
+        });
+
+        function runAllTests() {
+            let passed = 0, failed = 0, total = tests.length;
+
+            tests.forEach((t, i) => {
+                const svg = document.getElementById(`bc-${i}`);
+                const resEl = document.getElementById(`res-${i}`);
+
+                try {
+                    // Convert SVG to canvas for reading
+                    const svgData = new XMLSerializer().serializeToString(svg);
+                    const img = new Image();
+                    img.onload = () => {
+                        const canvas = document.createElement('canvas');
+                        canvas.width = img.naturalWidth * 3;  // 3x for better resolution
+                        canvas.height = img.naturalHeight * 3;
+                        const ctx = canvas.getContext('2d');
+                        ctx.imageSmoothingEnabled = false; // Crisp barcode edges
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, canvas.width, canvas.height);
+                        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+
+                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+
+                        // Test with readBarcode
+                        const result = czQR.readBarcode(imageData);
+
+                        if (result && result.data) {
+                            const dataMatch = result.data === t.data;
+                            if (dataMatch) {
+                                passed++;
+                                resEl.innerHTML = `✅ PASS — Data: <code>${result.data}</code> | Format: ${result.format} | Checksum: ${result.checksumValid}`;
+                                resEl.className = 'result pass';
+                            } else {
+                                failed++;
+                                resEl.innerHTML = `⚠️ MISMATCH — Got: <code>${result.data}</code> (expected: <code>${t.data}</code>) | Format: ${result.format}`;
+                                resEl.className = 'result fail';
+                            }
+                        } else {
+                            // Also try czQR.read() as fallback
+                            const result2 = czQR.read(imageData);
+                            if (result2 && result2.data && result2.data === t.data) {
+                                passed++;
+                                resEl.innerHTML = `✅ PASS (via read) — Data: <code>${result2.data}</code> | Format: ${result2.format}`;
+                                resEl.className = 'result pass';
+                            } else {
+                                failed++;
+                                resEl.innerHTML = `❌ FAIL — No barcode detected` + (result2 ? ` (got: ${result2.data})` : '');
+                                resEl.className = 'result fail';
+                            }
+                        }
+                        updateSummary(passed, failed, total);
+                    };
+                    img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
+                } catch (e) {
+                    failed++;
+                    resEl.innerHTML = `❌ ERROR: ${e.message}`;
+                    resEl.className = 'result fail';
+                    updateSummary(passed, failed, total);
+                }
+            });
+        }
+
+        function updateSummary(passed, failed, total) {
+            const tested = passed + failed;
+            document.getElementById('summary').innerHTML = 
+                `<strong>Results:</strong> ${tested}/${total} tested — ` +
+                `<span style="color:#3fb950">✅ ${passed} passed</span> | ` +
+                `<span style="color:#f85149">❌ ${failed} failed</span>` +
+                (tested === total ? ` — <strong>${Math.round(passed/total*100)}% success rate</strong>` : ' — running...');
+        }
+    </script>
+</body>
+</html>

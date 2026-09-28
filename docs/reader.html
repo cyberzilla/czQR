@@ -854,8 +854,8 @@
                 </svg>
                 czQR Scanner
             </div>
-            <h1>Scan QR Codes</h1>
-            <p>Scan from your camera in real-time or upload an image file to decode any QR code instantly.</p>
+            <h1>Scan QR & Barcodes</h1>
+            <p>Scan from your camera in real-time or upload an image to decode QR codes and 1D barcodes (EAN-13, Code-128, Code-39, and more).</p>
         </header>
 
         <div class="card anim ad1">
@@ -1089,7 +1089,7 @@
             }
 
             // === Result ===
-            function showResult(text, source) {
+            function showResult(text, source, format, fromHistory) {
                 resultEmpty.style.display = 'none';
                 resultFound.style.display = 'block';
                 resultText.textContent = text;
@@ -1110,17 +1110,19 @@
                 // Meta info
                 const now = new Date();
                 const type = detectType(text);
+                const fmtLabel = format === 'qr' ? 'QR Code' : (format || 'Unknown').toUpperCase();
                 resultMeta.innerHTML = `
+                    <div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>Format: ${fmtLabel}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--cy)"></div>Type: ${type}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--em)"></div>Length: ${text.length} chars</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--am)"></div>Source: ${source}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>${now.toLocaleTimeString()}</div>
                 `;
 
-                // Add to history (avoid duplicates in sequence)
-                if (text !== lastResult) {
+                // Add to history (avoid duplicates in sequence, skip if from history click)
+                if (!fromHistory && text !== lastResult) {
                     lastResult = text;
-                    history.unshift({ text, time: now, source, type });
+                    history.unshift({ text, time: now, source, type, format: fmtLabel, rawFormat: format });
                     if (history.length > 20) history.pop();
                     renderHistory();
                 }
@@ -1154,7 +1156,7 @@
                 historyList.querySelectorAll('.history-item').forEach(el => {
                     el.addEventListener('click', () => {
                         const h = history[parseInt(el.dataset.idx)];
-                        showResult(h.text, h.source);
+                        showResult(h.text, h.source, h.rawFormat, true);
                     });
                 });
             }
@@ -1269,8 +1271,8 @@
                         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
                         const result = czQR.read(imageData);
                         if (result && result.data) {
-                            showResult(result.data, 'Camera');
-                            toast('✓ QR Code detected!');
+                            showResult(result.data, 'Camera', result.format);
+                            toast('✓ ' + (result.format === 'qr' ? 'QR Code' : 'Barcode [' + (result.format || '').toUpperCase() + ']') + ' detected!');
                             playBeep();
                             pauseScanning();
                             return; // stop scan loop — user can click "Scan Again"
@@ -1316,11 +1318,11 @@
                             try {
                                 const result = czQR.readFromImage(img);
                                 if (result && result.data) {
-                                    showResult(result.data, 'File');
-                                    toast('✓ QR Code decoded!');
+                                    showResult(result.data, 'File', result.format);
+                                    toast('✓ ' + (result.format === 'qr' ? 'QR Code' : 'Barcode [' + (result.format || '').toUpperCase() + ']') + ' decoded!');
                                     playBeep();
                                 } else {
-                                    toast('No QR code found in this image');
+                                    toast('No QR code or barcode found in this image');
                                 }
                             } catch (err) {
                                 console.warn('File decode error:', err);

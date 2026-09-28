@@ -2,8 +2,8 @@
 
 [![Support Development](https://img.shields.io/badge/Support%20Development-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/abudzakiyyah/7usd?country.x=USD)
 
-> **Zero-dependency**, single-file QR Code **generator & reader** for JavaScript.  
-> Supports **PNG, SVG, WEBP, HTML, ASCII** output — with **rounded modules**, **finder pattern styling**, **logo**, **label**, **transparent background**, and **built-in camera/image QR reader**.
+> **Zero-dependency**, single-file QR Code & Barcode **generator & reader** for JavaScript.  
+> Supports **PNG, SVG, WEBP, HTML, ASCII** output — with **rounded modules**, **finder pattern styling**, **logo**, **label**, **transparent background**, **built-in camera/image QR reader**, and **1D barcode scanner** (EAN-13, EAN-8, UPC-A, Code-128, Code-39, ITF).
 
 ---
 
@@ -13,7 +13,7 @@
 czQR/
 ├── czQR.js            # Source — full with comments (development)
 ├── dist/
-│   └── czQR.min.js    # Minified — production ready (~56 KB)
+│   └── czQR.min.js    # Minified — production ready (~66 KB)
 ├── docs/
 │   ├── index.html     # Demo — QR Generator (GitHub Pages)
 │   ├── reader.html    # Demo — QR Reader (GitHub Pages)
@@ -360,6 +360,70 @@ if (result) console.log(result.data);
 
 ---
 
+## Barcode Reader API
+
+### `czQR.readBarcode(source, options?)`
+
+Read 1D barcode from an `ImageData`, `<canvas>`, or `<img>` element.
+
+```javascript
+const result = czQR.readBarcode(imgElement);
+if (result) {
+  console.log(result.data);        // "4006381333931"
+  console.log(result.format);      // "ean13"
+  console.log(result.type);        // "1d"
+  console.log(result.checksumValid); // true
+}
+
+// Filter specific formats:
+const result2 = czQR.readBarcode(imgElement, {
+  formats: ['code128', 'ean13']
+});
+```
+
+### Auto-detect with `czQR.read()`
+
+`czQR.read()` now automatically tries QR decoding first, then falls back to 1D barcode scanning:
+
+```javascript
+const result = czQR.read(imgElement);
+if (result) {
+  if (result.format === 'qr') {
+    console.log('QR Code:', result.data);
+  } else {
+    console.log(`Barcode (${result.format}):`, result.data);
+  }
+}
+```
+
+### Supported Barcode Formats
+
+| Format | Constant | Description |
+|--------|----------|-------------|
+| EAN-13 | `czQR.BC_EAN13` | 13-digit product barcode (global) |
+| EAN-8 | `czQR.BC_EAN8` | 8-digit compact product barcode |
+| UPC-A | `czQR.BC_UPCA` | 12-digit product barcode (US/CA) |
+| UPC-E | `czQR.BC_UPCE` | 8-digit compressed UPC |
+| Code-128 | `czQR.BC_CODE128` | Full ASCII, logistics & shipping |
+| Code-39 | `czQR.BC_CODE39` | Alphanumeric, industrial |
+| ITF | `czQR.BC_ITF` | Interleaved 2-of-5, carton labels |
+| Codabar | `czQR.BC_CODABAR` | Blood banks, libraries |
+| GS1-128 | `czQR.BC_GS1_128` | Supply chain with AI identifiers |
+| EAN-14 | `czQR.BC_EAN14` | 14-digit trade item |
+
+### Barcode Result Object
+
+```javascript
+{
+  data: "4006381333931",     // Decoded content
+  format: "ean13",           // Format identifier
+  type: "1d",                // "1d" for barcodes, "2d" for QR
+  checksumValid: true        // Checksum verification result
+}
+```
+
+---
+
 ## Examples
 
 ### Simple QR
@@ -484,6 +548,8 @@ qr.info()                // Object — metadata (version, mode, utilization, etc
 | **QR Reader (camera)** | ✅ |
 | **Styled QR Reader** | ✅ |
 | **RS Error Correction** | ✅ (Sugiyama) |
+| **1D Barcode Reader** | ✅ (EAN-13, EAN-8, UPC-A, Code-128, Code-39, ITF) |
+| **Auto-detect QR + Barcode** | ✅ |
 
 ---
 
