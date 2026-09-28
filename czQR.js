@@ -3076,7 +3076,7 @@ class czQR {
         idx += 10;
       }
       
-      if (digits.length > 0 && idx + 2 < runs.length) {
+      if (digits.length >= 6 && idx + 2 < runs.length) {
         const endRuns = [runs[idx].len, runs[idx+1].len, runs[idx+2].len];
         let sorted = [...endRuns].sort((a,b)=>a-b);
         let threshold = (sorted[1] + sorted[2]) / 2;
