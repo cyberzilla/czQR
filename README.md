@@ -1,5 +1,7 @@
 # czQR — QR Code Generator & Reader
 
+[![Support Development](https://img.shields.io/badge/Support%20Development-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/abudzakiyyah/7usd?country.x=USD)
+
 > **Zero-dependency**, single-file QR Code **generator & reader** for JavaScript.  
 > Supports **PNG, SVG, WEBP, HTML, ASCII** output — with **rounded modules**, **finder pattern styling**, **logo**, **label**, **transparent background**, and **built-in camera/image QR reader**.
 
