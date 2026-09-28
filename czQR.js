@@ -2329,23 +2329,81 @@ class czQR {
 
     const results = [];
     const seen = new Set();
+    const addResult = (r) => {
+      if (r && r.data && !seen.has(r.data)) { results.push(r); seen.add(r.data); return true; }
+      return false;
+    };
 
-    // 1. Find ALL QR codes
-    const qrResults = czQR._rd_tryDecodeAll(imgData);
-    for (const qr of qrResults) {
-      if (!seen.has(qr.data)) {
-        results.push(qr);
-        seen.add(qr.data);
+    // ═══ Step 1: Fast full-image read (~50ms) ═══
+    try { addResult(czQR.read(imgData)); } catch (e) {}
+
+    // ═══ Step 2: Quick probe for ADDITIONAL codes (~10-15ms) ═══
+    let needsDeepScan = false;
+    const w = imgData.width, h = imgData.height;
+
+    // 2a: Count QR finder pattern groups
+    try {
+      const bm = czQR._rd_binarize(imgData, 0);
+      const groups = czQR._rd_findAllFinderGroups(bm);
+      if (groups.length > 1) needsDeepScan = true;
+    } catch (e) {}
+
+    // 2b: Barcode segment probe (finds barcodes in different regions)
+    if (!needsDeepScan) {
+      const bcFmt = [czQR.BC_EAN13, czQR.BC_EAN8, czQR.BC_UPCA, czQR.BC_CODE128, czQR.BC_CODE39, czQR.BC_ITF];
+      outer: for (const yFrac of [0.25, 0.5, 0.75]) {
+        const y = Math.floor(h * yFrac);
+        for (let seg = 0; seg < 3; seg++) {
+          const xStart = Math.floor(w * seg / 3), xEnd = Math.floor(w * (seg + 1) / 3);
+          const segW = xEnd - xStart;
+          if (segW < 50) continue;
+          const segLuma = new Uint8Array(segW);
+          const d = imgData.data, off = y * w * 4;
+          for (let x = 0; x < segW; x++) {
+            const i = off + (xStart + x) * 4;
+            segLuma[x] = (d[i] * 299 + d[i+1] * 587 + d[i+2] * 114) / 1000;
+          }
+          const binRow = czQR._bc_binarizeRow(segLuma);
+          const runs = czQR._bc_runLengthEncode(binRow);
+          if (runs && runs.length >= 10) {
+            const r = czQR._bc_decodeScanline(runs, bcFmt);
+            if (r && (r.format !== czQR.BC_ITF || r.checksumValid)) {
+              addResult(r);
+              needsDeepScan = true;
+              break outer;
+            }
+          }
+        }
       }
     }
 
-    // 2. Find ALL barcodes
-    const bcResults = czQR._bc_scanImageAll(imgData);
-    for (const bc of bcResults) {
-      if (!seen.has(bc.data)) {
-        results.push(bc);
-        seen.add(bc.data);
+    // ═══ Step 3: Deep scan (only if multiple codes detected) ═══
+    if (needsDeepScan) {
+      // Sub-region QR scanning
+      const regions = [
+        [0, 0, Math.floor(w/2), h], [Math.floor(w/2), 0, w - Math.floor(w/2), h],
+        [0, 0, w, Math.floor(h/2)], [0, Math.floor(h/2), w, h - Math.floor(h/2)],
+        [0, 0, Math.floor(w/2), Math.floor(h/2)],
+        [Math.floor(w/2), 0, w - Math.floor(w/2), Math.floor(h/2)],
+        [0, Math.floor(h/2), Math.floor(w/2), h - Math.floor(h/2)],
+        [Math.floor(w/2), Math.floor(h/2), w - Math.floor(w/2), h - Math.floor(h/2)]
+      ];
+      for (const [rx, ry, rw, rh] of regions) {
+        if (rw < 50 || rh < 50) continue;
+        try {
+          const sub = new ImageData(rw, rh);
+          for (let y = 0; y < rh; y++) {
+            const srcOff = ((ry + y) * w + rx) * 4;
+            const dstOff = y * rw * 4;
+            sub.data.set(imgData.data.subarray(srcOff, srcOff + rw * 4), dstOff);
+          }
+          addResult(czQR.read(sub));
+        } catch (e) {}
       }
+
+      // Full barcode scanning
+      const bcResults = czQR._bc_scanImageAll(imgData);
+      for (const bc of bcResults) addResult(bc);
     }
 
     return results;
@@ -2523,33 +2581,96 @@ class czQR {
   static _bc_scanImageAll(imgData, formats) {
     if (!formats || !formats.length) formats = [czQR.BC_EAN13, czQR.BC_EAN8, czQR.BC_UPCA, czQR.BC_UPCE, czQR.BC_CODE128, czQR.BC_CODE39, czQR.BC_ITF, czQR.BC_CODABAR];
     const { width, height } = imgData;
-    const yFractions = [0.2, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.8];
+    const yFractions = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85];
     const results = [];
     const seen = new Set();
 
+    const tryDecode = (runs) => {
+      if (!runs || runs.length < 10) return;
+      const addIfValid = (r) => {
+        if (!r || seen.has(r.data)) return;
+        // Reject ITF with invalid checksum (likely false positive)
+        if (r.format === czQR.BC_ITF && !r.checksumValid) return;
+        results.push(r); seen.add(r.data);
+      };
+      addIfValid(czQR._bc_decodeScanline(runs, formats));
+      addIfValid(czQR._bc_decodeScanline([...runs].reverse(), formats));
+    };
+
+    // Scan full-width lines
     for (const yFrac of yFractions) {
       const y = Math.floor(height * yFrac);
       const lumaRow = czQR._bc_getLumaRow(imgData, y);
       const binRow = czQR._bc_binarizeRow(lumaRow);
-      const runs = czQR._bc_runLengthEncode(binRow);
-      if (!runs || runs.length < 10) continue;
+      tryDecode(czQR._bc_runLengthEncode(binRow));
+    }
 
-      // Forward scan
-      const result = czQR._bc_decodeScanline(runs, formats);
-      if (result && !seen.has(result.data)) {
-        results.push(result);
-        seen.add(result.data);
-      }
-
-      // Reverse scan
-      const reversedRuns = [...runs].reverse();
-      const revResult = czQR._bc_decodeScanline(reversedRuns, formats);
-      if (revResult && !seen.has(revResult.data)) {
-        results.push(revResult);
-        seen.add(revResult.data);
+    // Scan in horizontal segments (for side-by-side barcodes)
+    const segments = 4;
+    for (const yFrac of [0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85]) {
+      const y = Math.floor(height * yFrac);
+      for (let seg = 0; seg < segments; seg++) {
+        const xStart = Math.floor(width * seg / segments);
+        const xEnd = Math.floor(width * (seg + 1) / segments);
+        const segWidth = xEnd - xStart;
+        if (segWidth < 50) continue;
+        const segLuma = new Uint8Array(segWidth);
+        const d = imgData.data;
+        const offset = y * width * 4;
+        for (let x = 0; x < segWidth; x++) {
+          const i = offset + (xStart + x) * 4;
+          segLuma[x] = (d[i] * 299 + d[i+1] * 587 + d[i+2] * 114) / 1000;
+        }
+        const segBin = czQR._bc_binarizeRow(segLuma);
+        tryDecode(czQR._bc_runLengthEncode(segBin));
       }
     }
+
+    // Scan at various angles for rotated/diagonal barcodes
+    const angles = [
+      Math.PI / 12,   //  15°
+      -Math.PI / 12,  // -15°
+      Math.PI / 6,    //  30°
+      -Math.PI / 6,   // -30°
+      Math.PI / 4,    //  45°
+      -Math.PI / 4,   // -45°
+      Math.PI / 2     //  90° (vertical)
+    ];
+    for (const angle of angles) {
+      const cos = Math.cos(angle), sin = Math.sin(angle);
+      const isVertical = Math.abs(sin) > Math.abs(cos);
+      const starts = [];
+      if (isVertical) {
+        // More vertical — start from top edge at different x positions
+        for (const f of [0.15, 0.3, 0.5, 0.7, 0.85]) starts.push([Math.floor(width * f), 0]);
+      } else {
+        // More horizontal — start from left edge at different y positions
+        for (const f of [0.15, 0.3, 0.5, 0.7, 0.85]) starts.push([0, Math.floor(height * f)]);
+      }
+      for (const [x0, y0] of starts) {
+        const lumaLine = czQR._bc_getLumaLine(imgData, x0, y0, cos, sin);
+        if (lumaLine.length < 50) continue;
+        const binLine = czQR._bc_binarizeRow(lumaLine);
+        tryDecode(czQR._bc_runLengthEncode(binLine));
+      }
+    }
+
     return results;
+  }
+
+  /** @internal Sample pixel luminance along a line at arbitrary angle */
+  static _bc_getLumaLine(imgData, x0, y0, dx, dy) {
+    const { width, height, data } = imgData;
+    const luma = [];
+    let x = x0, y = y0;
+    while (x >= 0 && x < width && y >= 0 && y < height) {
+      const px = Math.round(x), py = Math.round(y);
+      const i = (py * width + px) * 4;
+      luma.push((data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) / 1000);
+      x += dx;
+      y += dy;
+    }
+    return new Uint8Array(luma);
   }
 
 
@@ -3076,12 +3197,19 @@ class czQR {
         idx += 10;
       }
       
-      if (digits.length >= 6 && idx + 2 < runs.length) {
+      if (digits.length >= 12 && idx + 2 < runs.length) {
         const endRuns = [runs[idx].len, runs[idx+1].len, runs[idx+2].len];
         let sorted = [...endRuns].sort((a,b)=>a-b);
         let threshold = (sorted[1] + sorted[2]) / 2;
         if (endRuns[0] > threshold && endRuns[1] < threshold && endRuns[2] < threshold) {
-          return { data: digits, format: czQR.BC_ITF, type: '1d', checksumValid: true };
+          // Validate Mod-10 checksum (last digit is check digit)
+          const digs = digits.split('').map(Number);
+          let sum = 0;
+          for (let i = 0; i < digs.length - 1; i++) {
+            sum += digs[i] * ((digs.length - 1 - i) % 2 === 0 ? 1 : 3);
+          }
+          const checkValid = (10 - (sum % 10)) % 10 === digs[digs.length - 1];
+          return { data: digits, format: czQR.BC_ITF, type: '1d', checksumValid: checkValid };
         }
       }
     }
