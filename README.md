@@ -9,11 +9,42 @@
 
 ```
 czQR/
-├── czQR.js        # Pure JavaScript (vanilla, no dependencies)
-├── index.html     # Demo UI — QR Generator
-├── reader.html    # Demo UI — QR Reader (camera + image upload)
+├── czQR.js            # Source — full with comments (development)
+├── dist/
+│   └── czQR.min.js    # Minified — production ready (~56 KB)
+├── docs/
+│   ├── index.html     # Demo — QR Generator (GitHub Pages)
+│   ├── reader.html    # Demo — QR Reader (GitHub Pages)
+│   └── czQR.min.js    # Minified copy for demo
+├── index.html         # Demo — QR Generator (local)
+├── reader.html        # Demo — QR Reader (local)
+├── LICENSE
 └── README.md
 ```
+
+---
+
+## Installation
+
+### CDN (jsDelivr)
+
+```html
+<script src="https://cdn.jsdelivr.net/gh/cyberzilla/czQR/dist/czQR.min.js"></script>
+```
+
+### Local
+
+```html
+<!-- Development (full source, ~107 KB) -->
+<script src="czQR.js"></script>
+
+<!-- Production (minified, ~56 KB) -->
+<script src="dist/czQR.min.js"></script>
+```
+
+### npm / download
+
+Just copy `dist/czQR.min.js` into your project — no build tools required.
 
 ---
 
@@ -22,7 +53,7 @@ czQR/
 ### Generate QR Code
 
 ```html
-<script src="czQR.js"></script>
+<script src="dist/czQR.min.js"></script>
 <script>
   const qr = new czQR('https://github.com/cyberzilla/czQR', 'H', 2);
   qr.size(400)
@@ -43,7 +74,7 @@ czQR/
 ### Read QR Code
 
 ```html
-<script src="czQR.js"></script>
+<script src="dist/czQR.min.js"></script>
 <script>
   // From an image element
   const result = czQR.readFromImage(imgElement);
@@ -460,8 +491,8 @@ qr.info()                // Object — metadata (version, mode, utilization, etc
 
 | Demo | Live | File |
 |------|------|------|
-| **Generator** | [cyberzilla.github.io/czQR](https://cyberzilla.github.io/czQR/index.html) | `index.html` |
-| **Reader** | [cyberzilla.github.io/czQR/reader](https://cyberzilla.github.io/czQR/reader.html) | `reader.html` |
+| **Generator** | [cyberzilla.github.io/czQR](https://cyberzilla.github.io/czQR/) | `docs/index.html` |
+| **Reader** | [cyberzilla.github.io/czQR/reader](https://cyberzilla.github.io/czQR/reader.html) | `docs/reader.html` |
 
 > No server required — also works offline by opening the files directly in browser.
 
