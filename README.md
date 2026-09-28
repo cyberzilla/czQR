@@ -13,7 +13,7 @@
 czQR/
 ├── czQR.js            # Source — full with comments (development)
 ├── dist/
-│   └── czQR.min.js    # Minified — production ready (~66 KB)
+│   └── czQR.min.js    # Minified — production ready (~71 KB)
 ├── docs/
 │   ├── index.html     # Demo — QR Generator (GitHub Pages)
 │   ├── reader.html    # Demo — QR Reader (GitHub Pages)
@@ -422,6 +422,25 @@ if (result) {
 }
 ```
 
+### Multi-Code Reader: `czQR.readAll(source)`
+
+Read **ALL** QR codes and barcodes from a single image. Returns an array of results.
+
+```javascript
+const results = czQR.readAll(imgElement);
+// results = [
+//   { data: "https://example.com", format: "qr", type: "2d", version: 2 },
+//   { data: "4006381333931", format: "ean13", type: "1d", checksumValid: true },
+//   { data: "ABC-1234", format: "code39", type: "1d", checksumValid: true }
+// ]
+
+for (const r of results) {
+  console.log(`[${r.format}] ${r.data}`);
+}
+```
+
+Supports: multiple QR codes side by side, QR + barcode mixed, multiple barcodes.
+
 ---
 
 ## Examples
@@ -550,6 +569,7 @@ qr.info()                // Object — metadata (version, mode, utilization, etc
 | **RS Error Correction** | ✅ (Sugiyama) |
 | **1D Barcode Reader** | ✅ (EAN-13, EAN-8, UPC-A, Code-128, Code-39, ITF) |
 | **Auto-detect QR + Barcode** | ✅ |
+| **Multi-Code Reader** | ✅ (`readAll()` — multiple QR + barcodes) |
 
 ---
 
