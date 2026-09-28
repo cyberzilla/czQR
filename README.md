@@ -16,8 +16,6 @@ czQR/
 │   ├── index.html     # Demo — QR Generator (GitHub Pages)
 │   ├── reader.html    # Demo — QR Reader (GitHub Pages)
 │   └── czQR.min.js    # Minified copy for demo
-├── index.html         # Demo — QR Generator (local)
-├── reader.html        # Demo — QR Reader (local)
 ├── LICENSE
 └── README.md
 ```
