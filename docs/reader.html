@@ -1128,6 +1128,51 @@
                 }
             }
 
+            function showMultiResults(results, source) {
+                if (!results || results.length === 0) return;
+                if (results.length === 1) {
+                    showResult(results[0].data, source, results[0].format);
+                    return;
+                }
+                resultEmpty.style.display = 'none';
+                resultFound.style.display = 'block';
+                btnOpen.style.display = 'none';
+
+                let html = '';
+                const now = new Date();
+                results.forEach((r, i) => {
+                    const fmtLabel = r.format === 'qr' ? 'QR Code' : (r.format || 'Unknown').toUpperCase();
+                    const type = detectType(r.data);
+                    let linkBtn = '';
+                    try {
+                        const url = new URL(r.data);
+                        if (url.protocol === 'http:' || url.protocol === 'https:')
+                            linkBtn = ` <a href="${r.data}" target="_blank" rel="noopener" style="color:var(--cy);font-size:12px">🔗 Open</a>`;
+                    } catch {}
+                    html += `<div style="background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:8px">
+                        <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
+                            <span style="background:var(--p);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${i+1}</span>
+                            <span style="font-weight:600;color:var(--fg)">${fmtLabel}</span>
+                            <span style="color:var(--fg2);font-size:12px">${type}</span>${linkBtn}
+                        </div>
+                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:13px;color:var(--cy);cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent).then(()=>this.style.opacity='0.5',setTimeout(()=>this.style.opacity='1',300))">${r.data}</div>
+                    </div>`;
+                    // Add each to history
+                    if (r.data !== lastResult) {
+                        history.unshift({ text: r.data, time: now, source, type, format: fmtLabel, rawFormat: r.format });
+                    }
+                });
+                if (history.length > 20) history.length = 20;
+                renderHistory();
+                lastResult = results[results.length - 1].data;
+
+                resultText.textContent = '';
+                resultMeta.innerHTML = `<div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>Found ${results.length} codes</div>
+                    <div class="meta-chip"><div class="meta-dot" style="background:var(--am)"></div>Source: ${source}</div>
+                    <div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>${now.toLocaleTimeString()}</div>`;
+                resultText.innerHTML = html;
+            }
+
             function detectType(text) {
                 try {
                     const url = new URL(text);
@@ -1269,10 +1314,15 @@
                         canvas.height = video.videoHeight;
                         ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
                         const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                        const result = czQR.read(imageData);
-                        if (result && result.data) {
-                            showResult(result.data, 'Camera', result.format);
-                            toast('✓ ' + (result.format === 'qr' ? 'QR Code' : 'Barcode [' + (result.format || '').toUpperCase() + ']') + ' detected!');
+                        const results = czQR.readAll(imageData);
+                        if (results.length > 0) {
+                            if (results.length === 1) {
+                                showResult(results[0].data, 'Camera', results[0].format);
+                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
+                            } else {
+                                showMultiResults(results, 'Camera');
+                                toast('✓ ' + results.length + ' codes detected!');
+                            }
                             playBeep();
                             pauseScanning();
                             return; // stop scan loop — user can click "Scan Again"
@@ -1316,10 +1366,15 @@
                         // Decode using czQR.read (deferred to let UI update)
                         setTimeout(() => {
                             try {
-                                const result = czQR.readFromImage(img);
-                                if (result && result.data) {
-                                    showResult(result.data, 'File', result.format);
-                                    toast('✓ ' + (result.format === 'qr' ? 'QR Code' : 'Barcode [' + (result.format || '').toUpperCase() + ']') + ' decoded!');
+                                const results = czQR.readAll(img);
+                                if (results.length > 0) {
+                                    if (results.length === 1) {
+                                        showResult(results[0].data, 'File', results[0].format);
+                                        toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' decoded!');
+                                    } else {
+                                        showMultiResults(results, 'File');
+                                        toast('✓ ' + results.length + ' codes decoded!');
+                                    }
                                     playBeep();
                                 } else {
                                     toast('No QR code or barcode found in this image');
