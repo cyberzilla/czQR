@@ -341,12 +341,10 @@ class czQR {
   // ── Canvas Renderer ──
   _toCanvas(size, fg, bg) {
     const total = this.getModuleCount();
-    const hasFinderRadius = this._finderStyle && ((this._finderStyle.outerRadius || 0) > 0 || (this._finderStyle.innerRadius || 0) > 0);
-    const needsSmooth = this._moduleShape !== 'square';
-    const scale = (this._moduleRadius > 0 || hasFinderRadius || needsSmooth) ? 4 : 1;
+    const scale = (this._moduleShape === 'dot' || this._moduleShape === 'diamond') ? 8 : 4;
     const rSize = size * scale;
-    const rModuleSize = Math.floor(rSize / total);
-    const rOffset = Math.floor((rSize - rModuleSize * total) / 2);
+    const rModuleSize = rSize / total;
+    const rOffset = (rSize - rModuleSize * total) / 2;
 
     const canvas = document.createElement('canvas');
     canvas.width = rSize; canvas.height = rSize;
@@ -368,7 +366,10 @@ class czQR {
     if (scale > 1) {
       const final = document.createElement('canvas');
       final.width = size; final.height = size;
-      final.getContext('2d').drawImage(canvas, 0, 0, rSize, rSize, 0, 0, size, size);
+      const fCtx = final.getContext('2d');
+      fCtx.imageSmoothingEnabled = true;
+      fCtx.imageSmoothingQuality = 'high';
+      fCtx.drawImage(canvas, 0, 0, rSize, rSize, 0, 0, size, size);
       return final;
     }
     return canvas;
@@ -387,8 +388,9 @@ class czQR {
     }
 
     if (shape === 'dot' || shape === 'diamond') {
-      const dotScale = 0.80, dotR = ms * dotScale / 2, half = ms / 2;
+      const dotR = ms * 0.40, half = ms / 2;
       ctx.fillStyle = fg;
+      ctx.beginPath();
       for (let r = 0; r < total; r++) for (let c = 0; c < total; c++) {
         if (hasFS) {
           const rr = r - this._quiet, rc = c - this._quiet;
@@ -397,12 +399,14 @@ class czQR {
         if (!this.isDark(r, c)) continue;
         const cx = offset + c * ms + half, cy = offset + r * ms + half;
         if (shape === 'dot') {
-          ctx.beginPath(); ctx.arc(cx, cy, dotR, 0, Math.PI * 2); ctx.fill();
+          ctx.moveTo(cx + dotR, cy);
+          ctx.arc(cx, cy, dotR, 0, Math.PI * 2);
         } else {
-          ctx.beginPath(); ctx.moveTo(cx, cy - half); ctx.lineTo(cx + half, cy);
-          ctx.lineTo(cx, cy + half); ctx.lineTo(cx - half, cy); ctx.closePath(); ctx.fill();
+          ctx.moveTo(cx, cy - half); ctx.lineTo(cx + half, cy);
+          ctx.lineTo(cx, cy + half); ctx.lineTo(cx - half, cy); ctx.closePath();
         }
       }
+      ctx.fill();
       if (hasFS) this._drawFinderPatternsCanvas(ctx, ms, offset, fg, bg);
       return;
     }
@@ -622,7 +626,7 @@ class czQR {
           }
         }
       }
-      return `<path d="${d}" stroke="transparent" fill="${fg}"/>`;
+      return `<path d="${d}" fill="${fg}"/>`;
     }
 
     if (shape === 'dot' || shape === 'diamond') {
