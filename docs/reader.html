@@ -1072,9 +1072,15 @@
             }
 
             // === Audio Feedback ===
+            let sharedAudioCtx = null;
+            function ensureAudioCtx() {
+                if (!sharedAudioCtx) sharedAudioCtx = new (window.AudioContext || window.webkitAudioContext)();
+                if (sharedAudioCtx.state === 'suspended') sharedAudioCtx.resume();
+                return sharedAudioCtx;
+            }
             function playBeep() {
                 try {
-                    const ac = new (window.AudioContext || window.webkitAudioContext)();
+                    const ac = ensureAudioCtx();
                     const osc = ac.createOscillator();
                     const gain = ac.createGain();
                     osc.connect(gain);
@@ -1147,7 +1153,7 @@
                     try {
                         const url = new URL(r.data);
                         if (url.protocol === 'http:' || url.protocol === 'https:')
-                            linkBtn = ` <a href="${r.data}" target="_blank" rel="noopener" style="color:var(--cy);font-size:12px">🔗 Open</a>`;
+                            linkBtn = ` <a href="${escHtml(r.data)}" target="_blank" rel="noopener" style="color:var(--cy);font-size:12px">🔗 Open</a>`;
                     } catch {}
                     html += `<div style="background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:8px">
                         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
@@ -1155,7 +1161,7 @@
                             <span style="font-weight:600;color:var(--fg)">${fmtLabel}</span>
                             <span style="color:var(--fg2);font-size:12px">${type}</span>${linkBtn}
                         </div>
-                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:13px;color:var(--cy);cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent).then(()=>this.style.opacity='0.5',setTimeout(()=>this.style.opacity='1',300))">${r.data}</div>
+                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:13px;color:var(--cy);cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent).then(()=>{this.style.opacity='0.5';setTimeout(()=>this.style.opacity='1',300)})">${escHtml(r.data)}</div>
                     </div>`;
                     // Add each to history
                     if (r.data !== lastResult) {

@@ -1148,7 +1148,12 @@
         let logoDataURL = null;
         $('logo').addEventListener('change', function () {
             const file = this.files[0];
-            if (!file) { logoDataURL = null; return; }
+            if (!file) {
+                logoDataURL = null;
+                $('logoName').textContent = '';
+                $('logoLbl').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Choose Logo`;
+                return;
+            }
             $('logoName').textContent = file.name;
             $('logoLbl').innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" width="16" height="16"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg> ${file.name}`;
             const reader = new FileReader();

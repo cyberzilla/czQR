@@ -81,6 +81,10 @@
             }
         });
 
+        function escHtml(s) {
+            return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
         function runAllTests() {
             let passed = 0, failed = 0, total = tests.length;
 
@@ -111,11 +115,11 @@
                             const dataMatch = result.data === t.data;
                             if (dataMatch) {
                                 passed++;
-                                resEl.innerHTML = `✅ PASS — Data: <code>${result.data}</code> | Format: ${result.format} | Checksum: ${result.checksumValid}`;
+                                resEl.innerHTML = `✅ PASS — Data: <code>${escHtml(result.data)}</code> | Format: ${escHtml(result.format)} | Checksum: ${result.checksumValid}`;
                                 resEl.className = 'result pass';
                             } else {
                                 failed++;
-                                resEl.innerHTML = `⚠️ MISMATCH — Got: <code>${result.data}</code> (expected: <code>${t.data}</code>) | Format: ${result.format}`;
+                                resEl.innerHTML = `⚠️ MISMATCH — Got: <code>${escHtml(result.data)}</code> (expected: <code>${escHtml(t.data)}</code>) | Format: ${escHtml(result.format)}`;
                                 resEl.className = 'result fail';
                             }
                         } else {
@@ -123,11 +127,11 @@
                             const result2 = czQR.read(imageData);
                             if (result2 && result2.data && result2.data === t.data) {
                                 passed++;
-                                resEl.innerHTML = `✅ PASS (via read) — Data: <code>${result2.data}</code> | Format: ${result2.format}`;
+                                resEl.innerHTML = `✅ PASS (via read) — Data: <code>${escHtml(result2.data)}</code> | Format: ${escHtml(result2.format)}`;
                                 resEl.className = 'result pass';
                             } else {
                                 failed++;
-                                resEl.innerHTML = `❌ FAIL — No barcode detected` + (result2 ? ` (got: ${result2.data})` : '');
+                                resEl.innerHTML = `❌ FAIL — No barcode detected` + (result2 ? ` (got: ${escHtml(result2.data)})` : '');
                                 resEl.className = 'result fail';
                             }
                         }
@@ -136,7 +140,7 @@
                     img.src = 'data:image/svg+xml;base64,' + btoa(unescape(encodeURIComponent(svgData)));
                 } catch (e) {
                     failed++;
-                    resEl.innerHTML = `❌ ERROR: ${e.message}`;
+                    resEl.innerHTML = `❌ ERROR: ${escHtml(e.message)}`;
                     resEl.className = 'result fail';
                     updateSummary(passed, failed, total);
                 }

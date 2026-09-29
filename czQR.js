@@ -569,7 +569,14 @@ class czQR {
     const textX = size / 2, textY = size / 2 + fontSize * 0.35;
     let svg = `<svg version="1.1" xmlns="http://www.w3.org/2000/svg"`;
     if (!this._renderScalable) svg += ` width="${size}px" height="${size}px"`;
-    svg += ` viewBox="0 0 ${size} ${size}" preserveAspectRatio="xMinYMin meet">`;
+    svg += ` viewBox="0 0 ${size} ${size}" preserveAspectRatio="xMinYMin meet"`;
+    const ariaIds = [];
+    if (this._renderTitle) ariaIds.push('czQR-title');
+    if (this._renderDesc) ariaIds.push('czQR-description');
+    if (ariaIds.length) svg += ` role="img" aria-labelledby="${ariaIds.join(' ')}"`;
+    svg += `>`;
+    if (this._renderTitle) svg += `<title id="czQR-title">${this._escHtml(this._renderTitle)}</title>`;
+    if (this._renderDesc) svg += `<description id="czQR-description">${this._escHtml(this._renderDesc)}</description>`;
     if (bg !== 'transparent') svg += `<rect width="100%" height="100%" fill="${this._escHtml(bg)}"/>`;
     svg += this._buildSVGModules(total, ms, 0, fg);
     const labelBg = bg === 'transparent' ? 'white' : this._escHtml(bg);
@@ -589,7 +596,14 @@ class czQR {
     const logoX = logoBgX + opts.padding, logoY = logoBgY + opts.padding;
     let svg = `<svg version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"`;
     if (!this._renderScalable) svg += ` width="${size}px" height="${size}px"`;
-    svg += ` viewBox="0 0 ${size} ${size}" preserveAspectRatio="xMinYMin meet">`;
+    svg += ` viewBox="0 0 ${size} ${size}" preserveAspectRatio="xMinYMin meet"`;
+    const ariaIds = [];
+    if (this._renderTitle) ariaIds.push('czQR-title');
+    if (this._renderDesc) ariaIds.push('czQR-description');
+    if (ariaIds.length) svg += ` role="img" aria-labelledby="${ariaIds.join(' ')}"`;
+    svg += `>`;
+    if (this._renderTitle) svg += `<title id="czQR-title">${this._escHtml(this._renderTitle)}</title>`;
+    if (this._renderDesc) svg += `<description id="czQR-description">${this._escHtml(this._renderDesc)}</description>`;
     if (bg !== 'transparent') svg += `<rect width="100%" height="100%" fill="${this._escHtml(bg)}"/>`;
     svg += this._buildSVGModules(total, ms, 0, fg);
     const logoBg = bg === 'transparent' ? 'white' : this._escHtml(bg);
@@ -1161,11 +1175,22 @@ class czQR {
       if (this._modules[row + 1][col + 1]) count++;
       if (count === 0 || count === 4) lp += 3;
     }
+    // Rule 3: finder-like pattern with 4-module quiet zone on either side
     for (let row = 0; row < mc; row++) for (let col = 0; col < mc - 6; col++) {
-      if (this._modules[row][col] && !this._modules[row][col + 1] && this._modules[row][col + 2] && this._modules[row][col + 3] && this._modules[row][col + 4] && !this._modules[row][col + 5] && this._modules[row][col + 6]) lp += 40;
+      if (this._modules[row][col] && !this._modules[row][col + 1] && this._modules[row][col + 2] && this._modules[row][col + 3] && this._modules[row][col + 4] && !this._modules[row][col + 5] && this._modules[row][col + 6]) {
+        // Check 4 light modules before (00001011101)
+        if (col >= 4 && !this._modules[row][col - 1] && !this._modules[row][col - 2] && !this._modules[row][col - 3] && !this._modules[row][col - 4]) lp += 40;
+        // Check 4 light modules after (10111010000)
+        else if (col + 10 < mc && !this._modules[row][col + 7] && !this._modules[row][col + 8] && !this._modules[row][col + 9] && !this._modules[row][col + 10]) lp += 40;
+      }
     }
     for (let col = 0; col < mc; col++) for (let row = 0; row < mc - 6; row++) {
-      if (this._modules[row][col] && !this._modules[row + 1][col] && this._modules[row + 2][col] && this._modules[row + 3][col] && this._modules[row + 4][col] && !this._modules[row + 5][col] && this._modules[row + 6][col]) lp += 40;
+      if (this._modules[row][col] && !this._modules[row + 1][col] && this._modules[row + 2][col] && this._modules[row + 3][col] && this._modules[row + 4][col] && !this._modules[row + 5][col] && this._modules[row + 6][col]) {
+        // Check 4 light modules before (00001011101)
+        if (row >= 4 && !this._modules[row - 1][col] && !this._modules[row - 2][col] && !this._modules[row - 3][col] && !this._modules[row - 4][col]) lp += 40;
+        // Check 4 light modules after (10111010000)
+        else if (row + 10 < mc && !this._modules[row + 7][col] && !this._modules[row + 8][col] && !this._modules[row + 9][col] && !this._modules[row + 10][col]) lp += 40;
+      }
     }
     let darkCount = 0;
     for (let col = 0; col < mc; col++) for (let row = 0; row < mc; row++) { if (this._modules[row][col]) darkCount++; }
@@ -1983,19 +2008,24 @@ class czQR {
 
   // ── Format Information (BCH-15,5) ──
   static _rd_readFormatInfo(grid, mc) {
-    // Primary copy: bits 0-5 at rows 0-5 col 8; bit 6 at row 7 col 8; bit 7 at row 8 col 8;
-    //               bits 8-14 at rows mc-7..mc-1 col 8
+    // Primary copy (all from top-left area):
+    //   bits 0-5: rows 0-5, col 8
+    //   bit 6: row 7, col 8
+    //   bit 7: row 8, col 8
+    //   bit 8: row 8, col 7
+    //   bits 9-14: row 8, cols 5..0
     let b1 = 0;
     for (let i = 0; i < 6; i++) b1 |= (grid[i][8] ? 1 : 0) << i;
     b1 |= (grid[7][8] ? 1 : 0) << 6;
     b1 |= (grid[8][8] ? 1 : 0) << 7;
-    for (let i = 0; i < 7; i++) b1 |= (grid[mc-7+i][8] ? 1 : 0) << (8+i);
-    // Secondary copy: bits 0-7 at row 8 cols mc-1..mc-8; bit 8 at row 8 col 7;
-    //                 bits 9-14 at row 8 cols 5..0
+    b1 |= (grid[8][7] ? 1 : 0) << 8;
+    for (let i = 0; i < 6; i++) b1 |= (grid[8][5-i] ? 1 : 0) << (9+i);
+    // Secondary copy (split between top-right and bottom-left):
+    //   bits 0-7: row 8, cols mc-1..mc-8
+    //   bits 8-14: rows mc-7..mc-1, col 8
     let b2 = 0;
     for (let i = 0; i < 8; i++) b2 |= (grid[8][mc-1-i] ? 1 : 0) << i;
-    b2 |= (grid[8][7] ? 1 : 0) << 8;
-    for (let i = 0; i < 6; i++) b2 |= (grid[8][5-i] ? 1 : 0) << (9+i);
+    for (let i = 0; i < 7; i++) b2 |= (grid[mc-7+i][8] ? 1 : 0) << (8+i);
 
     const G15 = 0x537, MASK = 0x5412;
     const tryDecode = (recv) => {
@@ -2156,7 +2186,7 @@ class czQR {
         if (cnt===1) { const v=read(6); if (v<0) return result; result+=CS[v]; }
       } else if (mode === 4) { // Byte
         const bytes=[]; for (let i=0;i<cnt;i++) { const v=read(8); if (v<0) break; bytes.push(v); }
-        try { result += new TextDecoder('utf-8').decode(new Uint8Array(bytes)); }
+        try { result += new TextDecoder('utf-8', { fatal: true }).decode(new Uint8Array(bytes)); }
         catch { bytes.forEach(b => { result += String.fromCharCode(b); }); }
       } else if (mode === 8) { // Kanji
         for (let i=0;i<cnt;i++) {
@@ -2222,15 +2252,20 @@ class czQR {
       const q = [];
       const dltInv = gi(rLast[0]);
       while (r.length >= rLast.length && r[0] !== 0) {
+        const degBefore = r.length;
         const scale = gm(r[0], dltInv);
         q.push(scale);
         for (let i = 0; i < rLast.length; i++) r[i] ^= gm(rLast[i], scale);
         // Remove leading zeros
         while (r.length > 1 && r[0] === 0) r = r.slice(1);
+        // If degree dropped by more than 1, insert zero coefficients for skipped degrees
+        const degAfter = r.length;
+        const dropped = degBefore - degAfter;
+        for (let z = 1; z < dropped; z++) q.push(0);
       }
-      // Pad q for alignment
+      // Pad q for remaining alignment (if loop exited early due to r[0]===0)
       const degDiff = rLastLast.length - rLast.length;
-      while (q.length < degDiff + 1) q.unshift(0);
+      while (q.length < degDiff + 1) q.push(0);
 
       // t = tLastLast - q * tLast
       // Multiply q * tLast
@@ -2391,13 +2426,14 @@ class czQR {
       for (const [rx, ry, rw, rh] of regions) {
         if (rw < 50 || rh < 50) continue;
         try {
-          const sub = new ImageData(rw, rh);
+          let sub = new ImageData(rw, rh);
           for (let y = 0; y < rh; y++) {
             const srcOff = ((ry + y) * w + rx) * 4;
             const dstOff = y * rw * 4;
             sub.data.set(imgData.data.subarray(srcOff, srcOff + rw * 4), dstOff);
           }
           addResult(czQR.read(sub));
+          sub = null; // Allow GC to collect sub-region data early
         } catch (e) {}
       }
 
@@ -2664,7 +2700,7 @@ class czQR {
     const luma = [];
     let x = x0, y = y0;
     while (x >= 0 && x < width && y >= 0 && y < height) {
-      const px = Math.round(x), py = Math.round(y);
+      const px = Math.min(Math.round(x), width - 1), py = Math.min(Math.round(y), height - 1);
       const i = (py * width + px) * 4;
       luma.push((data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) / 1000);
       x += dx;
