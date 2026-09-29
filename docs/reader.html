@@ -279,25 +279,28 @@
         .scan-box::before {
             content: '';
             position: absolute;
+            top: 0;
             left: 0;
             right: 0;
-            height: 2px;
-            background: linear-gradient(90deg, transparent, var(--cy), transparent);
+            bottom: 0;
+            background: linear-gradient(90deg, transparent, var(--cy), transparent) no-repeat top center / 100% 2px;
             animation: scanline 2s ease-in-out infinite;
-            box-shadow: 0 0 12px var(--cy)
+            filter: drop-shadow(0 0 12px var(--cy));
+            will-change: transform;
+            pointer-events: none
         }
 
         @keyframes scanline {
             0% {
-                top: 0
+                transform: translateY(0)
             }
 
             50% {
-                top: calc(100% - 2px)
+                transform: translateY(calc(100% - 2px))
             }
 
             100% {
-                top: 0
+                transform: translateY(0)
             }
         }
 
@@ -763,10 +766,10 @@
         }
 
         .scan-overlay.scan-success .scan-box::before {
-            background: linear-gradient(90deg, transparent, var(--em), transparent);
-            box-shadow: 0 0 12px var(--em);
+            background: linear-gradient(90deg, transparent, var(--em), transparent) no-repeat top center / 100% 2px;
+            filter: drop-shadow(0 0 12px var(--em));
             animation: none;
-            top: 50%
+            transform: translateY(50%)
         }
 
         .scan-overlay.scan-success .scan-corner {
@@ -1047,11 +1050,179 @@
 
             let stream = null;
             let scanning = false;
-            let scanTimeout = null;
             let history = [];
             let lastResult = '';
 
-            const SCAN_INTERVAL = 200; // ~5 fps — balances speed vs CPU usage
+            const SCAN_INTERVAL = 200; // minimum ms between scans (~5 fps max)
+            const MAX_SCAN_DIM = 480;   // max pixel dimension for scan canvas (downscale for perf)
+
+            // Off-screen canvas for ROI extraction (reused across frames)
+            const roiCanvas = document.createElement('canvas');
+            const roiCtx = roiCanvas.getContext('2d', { willReadFrequently: true });
+            let lastCanvasW = 0, lastCanvasH = 0;
+            let scanRAF = null;
+            let lastScanTime = 0;
+            let multiScanMode = false; // false = fast single scan, true = readAll
+
+            // Pause scanning when tab is backgrounded
+            document.addEventListener('visibilitychange', () => {
+                if (document.hidden) {
+                    if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
+                } else if (scanning) {
+                    lastScanTime = 0;
+                    scanRAF = requestAnimationFrame(scanFrame);
+                }
+            });
+
+            async function startCamera() {
+                try {
+                    const constraints = {
+                        video: {
+                            facingMode: 'environment',
+                            width: { ideal: 1280 },
+                            height: { ideal: 720 }
+                        }
+                    };
+                    const deviceId = camSelect.value;
+                    if (deviceId) {
+                        constraints.video = { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } };
+                    }
+                    stream = await navigator.mediaDevices.getUserMedia(constraints);
+                    video.srcObject = stream;
+                    await video.play();
+
+                    // Initialize AudioContext on user gesture for autoplay policy
+                    ensureAudioCtx();
+
+                    camWrap.style.display = 'block';
+                    camMsg.style.display = 'none';
+                    btnStart.style.display = 'none';
+                    camActions.style.display = 'flex';
+                    btnScanAgain.style.display = 'none';
+                    scanOverlay.classList.remove('scan-success');
+
+                    listCameras();
+                    lastCanvasW = 0; lastCanvasH = 0; // force canvas resize on first frame
+                    scanning = true;
+                    lastScanTime = 0;
+                    scanRAF = requestAnimationFrame(scanFrame);
+                } catch (err) {
+                    toast('Camera error: ' + err.message);
+                }
+            }
+
+            function stopCamera() {
+                scanning = false;
+                if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
+                if (stream) {
+                    stream.getTracks().forEach(t => t.stop());
+                    stream = null;
+                }
+                video.srcObject = null;
+                camWrap.style.display = 'none';
+                camMsg.style.display = 'block';
+                btnStart.style.display = 'flex';
+                camActions.style.display = 'none';
+                btnScanAgain.style.display = 'none';
+                scanOverlay.classList.remove('scan-success');
+            }
+
+            function pauseScanning() {
+                scanning = false;
+                if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
+                btnScanAgain.style.display = 'flex';
+                scanOverlay.classList.add('scan-success');
+                // Haptic feedback
+                if (navigator.vibrate) navigator.vibrate(200);
+            }
+
+            function resumeScanning() {
+                btnScanAgain.style.display = 'none';
+                scanOverlay.classList.remove('scan-success');
+                lastResult = '';
+                scanning = true;
+                lastScanTime = 0;
+                scanRAF = requestAnimationFrame(scanFrame);
+            }
+
+            function scanFrame(timestamp) {
+                if (!scanning) return;
+
+                // Skip if tab is hidden
+                if (document.hidden) {
+                    scanRAF = requestAnimationFrame(scanFrame);
+                    return;
+                }
+
+                // Throttle: only process at SCAN_INTERVAL rate
+                if (timestamp - lastScanTime < SCAN_INTERVAL) {
+                    scanRAF = requestAnimationFrame(scanFrame);
+                    return;
+                }
+                lastScanTime = timestamp;
+
+                try {
+                    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+                        const vw = video.videoWidth, vh = video.videoHeight;
+
+                        // Only resize main canvas when video dimensions change
+                        if (lastCanvasW !== vw || lastCanvasH !== vh) {
+                            canvas.width = vw;
+                            canvas.height = vh;
+                            lastCanvasW = vw;
+                            lastCanvasH = vh;
+                        }
+
+                        // Draw full video to main canvas (for visual feedback)
+                        ctx.drawImage(video, 0, 0, vw, vh);
+
+                        // Extract ROI: center 65% of the frame, downscaled
+                        const roiFrac = 0.65;
+                        const srcW = Math.floor(vw * roiFrac);
+                        const srcH = Math.floor(vh * roiFrac);
+                        const sx = Math.floor((vw - srcW) / 2);
+                        const sy = Math.floor((vh - srcH) / 2);
+
+                        // Downscale to max MAX_SCAN_DIM for performance
+                        const scale = Math.min(1, MAX_SCAN_DIM / Math.max(srcW, srcH));
+                        const dstW = Math.round(srcW * scale);
+                        const dstH = Math.round(srcH * scale);
+
+                        // Resize ROI canvas only when needed
+                        if (roiCanvas.width !== dstW || roiCanvas.height !== dstH) {
+                            roiCanvas.width = dstW;
+                            roiCanvas.height = dstH;
+                        }
+                        roiCtx.drawImage(canvas, sx, sy, srcW, srcH, 0, 0, dstW, dstH);
+                        const imageData = roiCtx.getImageData(0, 0, dstW, dstH);
+
+                        // Fast path: single code scan first
+                        let results = [];
+                        if (multiScanMode) {
+                            results = czQR.readAll(imageData);
+                        } else {
+                            const r = czQR.read(imageData);
+                            if (r && r.data) results = [r];
+                        }
+
+                        if (results.length > 0) {
+                            if (results.length === 1) {
+                                showResult(results[0].data, 'Camera', results[0].format);
+                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
+                            } else {
+                                showMultiResults(results, 'Camera');
+                                toast('✓ ' + results.length + ' codes detected!');
+                            }
+                            playBeep();
+                            pauseScanning();
+                            return; // stop scan loop
+                        }
+                    }
+                } catch (err) {
+                    console.warn('Scan frame error:', err);
+                }
+                scanRAF = requestAnimationFrame(scanFrame);
+            }
 
             // === Tabs ===
             tabs.forEach(t => t.addEventListener('click', () => {
@@ -1245,100 +1416,6 @@
                         camSelect.style.display = 'block';
                     }
                 } catch { }
-            }
-
-            async function startCamera() {
-                try {
-                    const constraints = {
-                        video: {
-                            facingMode: 'environment',
-                            width: { ideal: 1280 },
-                            height: { ideal: 720 }
-                        }
-                    };
-                    const deviceId = camSelect.value;
-                    if (deviceId) {
-                        constraints.video = { deviceId: { exact: deviceId }, width: { ideal: 1280 }, height: { ideal: 720 } };
-                    }
-                    stream = await navigator.mediaDevices.getUserMedia(constraints);
-                    video.srcObject = stream;
-                    await video.play();
-
-                    camWrap.style.display = 'block';
-                    camMsg.style.display = 'none';
-                    btnStart.style.display = 'none';
-                    camActions.style.display = 'flex';
-                    btnScanAgain.style.display = 'none';
-                    scanOverlay.classList.remove('scan-success');
-
-                    listCameras();
-                    scanning = true;
-                    scanFrame();
-                } catch (err) {
-                    toast('Camera error: ' + err.message);
-                }
-            }
-
-            function stopCamera() {
-                scanning = false;
-                if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null; }
-                if (stream) {
-                    stream.getTracks().forEach(t => t.stop());
-                    stream = null;
-                }
-                video.srcObject = null;
-                camWrap.style.display = 'none';
-                camMsg.style.display = 'block';
-                btnStart.style.display = 'flex';
-                camActions.style.display = 'none';
-                btnScanAgain.style.display = 'none';
-                scanOverlay.classList.remove('scan-success');
-            }
-
-            function pauseScanning() {
-                scanning = false;
-                if (scanTimeout) { clearTimeout(scanTimeout); scanTimeout = null; }
-                btnScanAgain.style.display = 'flex';
-                scanOverlay.classList.add('scan-success');
-                // Haptic feedback
-                if (navigator.vibrate) navigator.vibrate(200);
-            }
-
-            function resumeScanning() {
-                btnScanAgain.style.display = 'none';
-                scanOverlay.classList.remove('scan-success');
-                lastResult = '';
-                scanning = true;
-                scanFrame();
-            }
-
-            function scanFrame() {
-                if (!scanning) return;
-                try {
-                    if (video.readyState === video.HAVE_ENOUGH_DATA) {
-                        canvas.width = video.videoWidth;
-                        canvas.height = video.videoHeight;
-                        ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-                        const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-                        const results = czQR.readAll(imageData);
-                        if (results.length > 0) {
-                            if (results.length === 1) {
-                                showResult(results[0].data, 'Camera', results[0].format);
-                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
-                            } else {
-                                showMultiResults(results, 'Camera');
-                                toast('✓ ' + results.length + ' codes detected!');
-                            }
-                            playBeep();
-                            pauseScanning();
-                            return; // stop scan loop — user can click "Scan Again"
-                        }
-                    }
-                } catch (err) {
-                    console.warn('Scan frame error:', err);
-                }
-                // Throttled: scan every 200ms (~5fps) instead of 60fps
-                scanTimeout = setTimeout(scanFrame, SCAN_INTERVAL);
             }
 
             btnStart.addEventListener('click', startCamera);
