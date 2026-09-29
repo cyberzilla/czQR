@@ -277,31 +277,27 @@
         }
 
         .scan-box::before {
-            content: '';
+            content: none
+        }
+
+        .cam-wrap canvas.detect-canvas {
+            display: block;
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 2
+        }
+
+        .img-detect-canvas {
             position: absolute;
             top: 0;
             left: 0;
-            right: 0;
-            bottom: 0;
-            background: linear-gradient(90deg, transparent, var(--cy), transparent) no-repeat top center / 100% 2px;
-            animation: scanline 2s ease-in-out infinite;
-            filter: drop-shadow(0 0 12px var(--cy));
-            will-change: transform;
-            pointer-events: none
-        }
-
-        @keyframes scanline {
-            0% {
-                transform: translateY(0)
-            }
-
-            50% {
-                transform: translateY(calc(100% - 2px))
-            }
-
-            100% {
-                transform: translateY(0)
-            }
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1
         }
 
         .scan-corner {
@@ -762,14 +758,8 @@
         }
 
         .scan-overlay.scan-success .scan-box {
-            border-color: var(--em)
-        }
-
-        .scan-overlay.scan-success .scan-box::before {
-            background: linear-gradient(90deg, transparent, var(--em), transparent) no-repeat top center / 100% 2px;
-            filter: drop-shadow(0 0 12px var(--em));
-            animation: none;
-            transform: translateY(50%)
+            border-color: var(--em);
+            box-shadow: 0 0 0 2000px rgba(0, 0, 0, .45)
         }
 
         .scan-overlay.scan-success .scan-corner {
@@ -889,6 +879,7 @@
                 <div class="cam-wrap" id="camWrap" style="display:none">
                     <video id="camVideo" playsinline autoplay muted></video>
                     <canvas id="camCanvas"></canvas>
+                    <canvas class="detect-canvas" id="detectCanvas"></canvas>
                     <div class="scan-overlay">
                         <div class="scan-box">
                             <div class="scan-corner sc-tl"></div>
@@ -933,8 +924,9 @@
 
             <!-- File Panel -->
             <div class="panel" id="panelFile">
-                <div class="img-preview" id="imgPreview">
+                <div class="img-preview" id="imgPreview" style="position:relative">
                     <img id="imgPreviewSrc" alt="Preview">
+                    <canvas class="img-detect-canvas" id="imgDetectCanvas"></canvas>
                     <button class="clear-img" id="btnClearImg" title="Remove image">&times;</button>
                     <div class="loading-overlay" id="fileLoading" style="display:none">
                         <div class="spinner"></div>
@@ -1032,6 +1024,8 @@
             const btnStop = document.getElementById('btnCamStop');
             const btnScanAgain = document.getElementById('btnScanAgain');
             const scanOverlay = document.querySelector('.scan-overlay');
+            const detectCanvas = document.getElementById('detectCanvas');
+            const detectCtx = detectCanvas.getContext('2d');
             const dropZone = document.getElementById('dropZone');
             const fileInput = document.getElementById('fileInput');
             const imgPreview = document.getElementById('imgPreview');
@@ -1047,6 +1041,56 @@
             const historyWrap = document.getElementById('historyWrap');
             const historyList = document.getElementById('historyList');
             const toastEl = document.getElementById('toast');
+            const imgDetectCanvas = document.getElementById('imgDetectCanvas');
+            const imgDetectCtx = imgDetectCanvas.getContext('2d');
+
+            // Reusable: draw detection markers on a canvas
+            // imgW/imgH = natural image size, canvasW/canvasH = display canvas size
+            // offX/offY/renderW/renderH = actual rendered area within canvas (for object-fit:contain)
+            function drawDetections(dCtx, results, imgW, imgH, canvasW, canvasH, offX, offY, renderW, renderH) {
+                dCtx.clearRect(0, 0, canvasW, canvasH);
+                if (!offX && offX !== 0) { offX = 0; offY = 0; renderW = canvasW; renderH = canvasH; }
+                const scaleX = renderW / imgW;
+                const scaleY = renderH / imgH;
+                const mx = (px) => offX + px * scaleX;
+                const my = (py) => offY + py * scaleY;
+
+                dCtx.lineWidth = 3;
+                dCtx.strokeStyle = '#10b981';
+                dCtx.font = 'bold 13px sans-serif';
+
+                for (const r of results) {
+                    if (r.format === 'qr' && r.points && r.points.length >= 3) {
+                        // points = [tl, tr, bl] → draw quad: tl → tr → br(estimated) → bl
+                        const pts = r.points.map(p => [mx(p.x), my(p.y)]);
+                        const br = [pts[1][0] + pts[2][0] - pts[0][0], pts[1][1] + pts[2][1] - pts[0][1]];
+                        dCtx.fillStyle = 'rgba(16, 185, 129, 0.18)';
+                        dCtx.beginPath();
+                        dCtx.moveTo(pts[0][0], pts[0][1]); // tl
+                        dCtx.lineTo(pts[1][0], pts[1][1]); // tr
+                        dCtx.lineTo(br[0], br[1]);          // br (estimated)
+                        dCtx.lineTo(pts[2][0], pts[2][1]); // bl
+                        dCtx.closePath();
+                        dCtx.fill();
+                        dCtx.stroke();
+                        // Corner dots
+                        dCtx.fillStyle = '#10b981';
+                        for (const pt of pts) {
+                            dCtx.beginPath();
+                            dCtx.arc(pt[0], pt[1], 5, 0, Math.PI * 2);
+                            dCtx.fill();
+                        }
+                    } else if (r.bounds) {
+                        const bx = mx(r.bounds.x), by = my(r.bounds.y);
+                        const bw = r.bounds.w * scaleX, bh = r.bounds.h * scaleY;
+                        dCtx.fillStyle = 'rgba(16, 185, 129, 0.18)';
+                        dCtx.fillRect(bx, by, bw, bh);
+                        dCtx.strokeRect(bx, by, bw, bh);
+                        dCtx.fillStyle = '#10b981';
+                        dCtx.fillText((r.format || '').toUpperCase(), bx + 4, by + bh - 4);
+                    }
+                }
+            }
 
             let stream = null;
             let scanning = false;
@@ -1139,6 +1183,7 @@
             function resumeScanning() {
                 btnScanAgain.style.display = 'none';
                 scanOverlay.classList.remove('scan-success');
+                detectCtx.clearRect(0, 0, detectCanvas.width, detectCanvas.height);
                 lastResult = '';
                 scanning = true;
                 lastScanTime = 0;
@@ -1205,7 +1250,74 @@
                             if (r && r.data) results = [r];
                         }
 
+                        // Clear detection overlay
+                        const wrapRect = camWrap.getBoundingClientRect();
+                        const dw = wrapRect.width, dh = wrapRect.height;
+                        if (detectCanvas.width !== Math.round(dw) || detectCanvas.height !== Math.round(dh)) {
+                            detectCanvas.width = Math.round(dw);
+                            detectCanvas.height = Math.round(dh);
+                        }
+                        detectCtx.clearRect(0, 0, detectCanvas.width, detectCanvas.height);
+
                         if (results.length > 0) {
+                            // Map ROI coordinates → display coordinates
+                            // video uses object-fit: cover on a 1:1 container
+                            const vidAspect = vw / vh;
+                            const wrapAspect = dw / dh;
+                            let vidDispW, vidDispH, vidOffX, vidOffY;
+                            if (vidAspect > wrapAspect) {
+                                vidDispH = dh;
+                                vidDispW = dh * vidAspect;
+                                vidOffX = -(vidDispW - dw) / 2;
+                                vidOffY = 0;
+                            } else {
+                                vidDispW = dw;
+                                vidDispH = dw / vidAspect;
+                                vidOffX = 0;
+                                vidOffY = -(vidDispH - dh) / 2;
+                            }
+                            const mapX = (rx) => vidOffX + (sx + rx / scale) / vw * vidDispW;
+                            const mapY = (ry) => vidOffY + (sy + ry / scale) / vh * vidDispH;
+
+                            // Draw detection markers
+                            detectCtx.lineWidth = 3;
+                            detectCtx.strokeStyle = '#10b981';
+                            detectCtx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+
+                            for (const r of results) {
+                                if (r.format === 'qr' && r.points && r.points.length >= 3) {
+                                    // QR: draw quad tl → tr → br(estimated) → bl
+                                    const pts = r.points.map(p => [mapX(p.x), mapY(p.y)]);
+                                    const br = [pts[1][0] + pts[2][0] - pts[0][0], pts[1][1] + pts[2][1] - pts[0][1]];
+                                    detectCtx.beginPath();
+                                    detectCtx.moveTo(pts[0][0], pts[0][1]); // tl
+                                    detectCtx.lineTo(pts[1][0], pts[1][1]); // tr
+                                    detectCtx.lineTo(br[0], br[1]);          // br
+                                    detectCtx.lineTo(pts[2][0], pts[2][1]); // bl
+                                    detectCtx.closePath();
+                                    detectCtx.fill();
+                                    detectCtx.stroke();
+
+                                    // Corner dots
+                                    detectCtx.fillStyle = '#10b981';
+                                    for (const pt of pts) {
+                                        detectCtx.beginPath();
+                                        detectCtx.arc(pt[0], pt[1], 5, 0, Math.PI * 2);
+                                        detectCtx.fill();
+                                    }
+                                    detectCtx.fillStyle = 'rgba(16, 185, 129, 0.15)';
+                                } else if (r.bounds) {
+                                    // Barcode: draw rectangle from bounds
+                                    const bx = mapX(r.bounds.x);
+                                    const by = mapY(r.bounds.y);
+                                    const bw = mapX(r.bounds.x + r.bounds.w) - bx;
+                                    const bh = mapY(r.bounds.y + r.bounds.h) - by;
+                                    detectCtx.fillRect(bx, by, bw, bh);
+                                    detectCtx.strokeRect(bx, by, bw, bh);
+                                }
+                            }
+
+                            // Show results
                             if (results.length === 1) {
                                 showResult(results[0].data, 'Camera', results[0].format);
                                 toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
@@ -1445,8 +1557,9 @@
 
                         // Show loading indicator
                         fileLoading.style.display = 'flex';
+                        imgDetectCtx.clearRect(0, 0, imgDetectCanvas.width, imgDetectCanvas.height);
 
-                        // Decode using czQR.read (deferred to let UI update)
+                        // Decode using czQR.readAll (deferred to let UI update)
                         setTimeout(() => {
                             try {
                                 const results = czQR.readAll(img);
@@ -1459,6 +1572,35 @@
                                         toast('✓ ' + results.length + ' codes decoded!');
                                     }
                                     playBeep();
+
+                                    // Draw markers on the preview overlay
+                                    const natW = img.naturalWidth || img.width;
+                                    const natH = img.naturalHeight || img.height;
+                                    // Wait for imgPreviewSrc to render, then match canvas to display size
+                                    requestAnimationFrame(() => {
+                                        const elW = imgPreviewSrc.clientWidth;
+                                        const elH = imgPreviewSrc.clientHeight;
+                                        imgDetectCanvas.width = elW;
+                                        imgDetectCanvas.height = elH;
+                                        // Compute object-fit: contain rendering area
+                                        const imgAspect = natW / natH;
+                                        const elAspect = elW / elH;
+                                        let renderW, renderH, offX, offY;
+                                        if (imgAspect > elAspect) {
+                                            // Image wider than container → letterbox top/bottom
+                                            renderW = elW;
+                                            renderH = elW / imgAspect;
+                                            offX = 0;
+                                            offY = (elH - renderH) / 2;
+                                        } else {
+                                            // Image taller than container → pillarbox left/right
+                                            renderH = elH;
+                                            renderW = elH * imgAspect;
+                                            offX = (elW - renderW) / 2;
+                                            offY = 0;
+                                        }
+                                        drawDetections(imgDetectCtx, results, natW, natH, elW, elH, offX, offY, renderW, renderH);
+                                    });
                                 } else {
                                     toast('No QR code or barcode found in this image');
                                 }
@@ -1498,6 +1640,7 @@
                 imgPreview.style.display = 'none';
                 dropZone.style.display = 'flex';
                 fileInput.value = '';
+                imgDetectCtx.clearRect(0, 0, imgDetectCanvas.width, imgDetectCanvas.height);
             });
 
             // === Paste support ===

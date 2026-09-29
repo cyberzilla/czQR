@@ -1246,8 +1246,13 @@ class czQR {
           const upSmooth = czQR._rd_rescaleSmooth(imgData, scale);
           const upImages = [upNN, upSmooth].filter(x => x);
           for (const up of upImages) {
+            const invScale = 1 / scale;
             let r = czQR._rd_tryDecode(up);
-            if (r) return r;
+            if (r) {
+              // Scale points back to original resolution
+              if (r.points) r.points = r.points.map(p => ({ x: p.x * invScale, y: p.y * invScale, estModuleSize: (p.estModuleSize || 1) * invScale, n: p.n }));
+              return r;
+            }
             // Also try with dilation for rounded/styled modules at small size
             const upBm = czQR._rd_binarize(up, 0);
             for (const dilR of [2, 3, 4]) {
@@ -1270,7 +1275,11 @@ class czQR {
                     czQR._rd_unmaskInPlace(grid, fmt.maskPattern, mc);
                     const bits = czQR._rd_readDataBits(grid, mc, ver);
                     const decoded = czQR._rd_decodePayload(bits, ver, fmt.ecLevel);
-                    if (decoded !== null) return { data: decoded, version: ver, ecLevel: fmt.ecLevelChar, points: fp, format: 'qr', type: '2d' };
+                    if (decoded !== null) {
+                      // Scale finder pattern points back to original resolution
+                      const scaledFp = fp.map(p => ({ x: p.x * invScale, y: p.y * invScale, estModuleSize: p.estModuleSize * invScale, n: p.n }));
+                      return { data: decoded, version: ver, ecLevel: fmt.ecLevelChar, points: scaledFp, format: 'qr', type: '2d' };
+                    }
                   }
                 }
               } catch (e) { continue; }
@@ -1404,7 +1413,9 @@ class czQR {
               const bits = czQR._rd_readDataBits(grid, mc, ver);
               const decoded = czQR._rd_decodePayload(bits, ver, fmt.ecLevel);
               if (decoded !== null) {
-                return { data: decoded, version: ver, ecLevel: fmt.ecLevelChar, points: fp, format: 'qr', type: '2d' };
+                // Scale finder pattern points back to original resolution
+                const scaledFp = fp.map(p => ({ x: p.x * sx, y: p.y * sy, estModuleSize: p.estModuleSize * sx, n: p.n }));
+                return { data: decoded, version: ver, ecLevel: fmt.ecLevelChar, points: scaledFp, format: 'qr', type: '2d' };
               }
             }
           }
@@ -1507,7 +1518,10 @@ class czQR {
             czQR._rd_unmaskInPlace(gCopy, fmt.maskPattern, mc);
             const bits = czQR._rd_readDataBits(gCopy, mc, fv);
             const decoded = czQR._rd_decodePayload(bits, fv, fmt.ecLevel);
-            if (decoded !== null) return { data: decoded, version: fv, ecLevel: fmt.ecLevelChar, points: fp, format: 'qr', type: '2d' };
+            if (decoded !== null) {
+                      const pts = label.startsWith('pad-') ? fp.map(p => ({ x: p.x - pad, y: p.y - pad, estModuleSize: p.estModuleSize, n: p.n })) : fp;
+                      return { data: decoded, version: fv, ecLevel: fmt.ecLevelChar, points: pts, format: 'qr', type: '2d' };
+                    }
           }
 
           // Try direct grayscale sampling
@@ -1521,7 +1535,10 @@ class czQR {
               czQR._rd_unmaskInPlace(gCopy2, fmt2.maskPattern, mc);
               const bits = czQR._rd_readDataBits(gCopy2, mc, fv);
               const decoded = czQR._rd_decodePayload(bits, fv, fmt2.ecLevel);
-              if (decoded !== null) return { data: decoded, version: fv, ecLevel: fmt2.ecLevelChar, points: fp, format: 'qr', type: '2d' };
+              if (decoded !== null) {
+                      const pts = label.startsWith('pad-') ? fp.map(p => ({ x: p.x - pad, y: p.y - pad, estModuleSize: p.estModuleSize, n: p.n })) : fp;
+                      return { data: decoded, version: fv, ecLevel: fmt2.ecLevelChar, points: pts, format: 'qr', type: '2d' };
+                    }
             }
           }
         }
@@ -2252,20 +2269,15 @@ class czQR {
       const q = [];
       const dltInv = gi(rLast[0]);
       while (r.length >= rLast.length && r[0] !== 0) {
-        const degBefore = r.length;
         const scale = gm(r[0], dltInv);
         q.push(scale);
         for (let i = 0; i < rLast.length; i++) r[i] ^= gm(rLast[i], scale);
         // Remove leading zeros
         while (r.length > 1 && r[0] === 0) r = r.slice(1);
-        // If degree dropped by more than 1, insert zero coefficients for skipped degrees
-        const degAfter = r.length;
-        const dropped = degBefore - degAfter;
-        for (let z = 1; z < dropped; z++) q.push(0);
       }
-      // Pad q for remaining alignment (if loop exited early due to r[0]===0)
+      // Pad q for alignment
       const degDiff = rLastLast.length - rLast.length;
-      while (q.length < degDiff + 1) q.push(0);
+      while (q.length < degDiff + 1) q.unshift(0);
 
       // t = tLastLast - q * tLast
       // Multiply q * tLast
@@ -2363,28 +2375,39 @@ class czQR {
     } else return [];
 
     const results = [];
-    const seen = new Set();
     const addResult = (r) => {
-      if (r && r.data && !seen.has(r.data)) { results.push(r); seen.add(r.data); return true; }
+      if (r && r.data) { results.push(r); return true; }
       return false;
     };
 
     // ═══ Step 1: Fast full-image read (~50ms) ═══
-    try { addResult(czQR.read(imgData)); } catch (e) {}
+    let step1Data = null;
+    try {
+      const r = czQR.read(imgData);
+      if (addResult(r)) step1Data = r.data;
+    } catch (e) {}
 
     // ═══ Step 2: Quick probe for ADDITIONAL codes (~10-15ms) ═══
-    let needsDeepScan = false;
+    let needsDeepQR = false;
+    let needsDeepBarcode = false;
     const w = imgData.width, h = imgData.height;
+    const earlyData = new Set();
+    if (step1Data) earlyData.add(step1Data);
+
+    // If Step 1 found a barcode (not QR), we know there might be more
+    if (results.length > 0 && results[0].format !== 'qr') {
+      needsDeepBarcode = true;
+    }
 
     // 2a: Count QR finder pattern groups
     try {
       const bm = czQR._rd_binarize(imgData, 0);
       const groups = czQR._rd_findAllFinderGroups(bm);
-      if (groups.length > 1) needsDeepScan = true;
+      if (groups.length > 1) needsDeepQR = true;
     } catch (e) {}
 
-    // 2b: Barcode segment probe (finds barcodes in different regions)
-    if (!needsDeepScan) {
+    // 2b: Barcode segment probe — always runs (regardless of QR finder detection)
+    if (!needsDeepBarcode) {
       const bcFmt = [czQR.BC_EAN13, czQR.BC_EAN8, czQR.BC_UPCA, czQR.BC_CODE128, czQR.BC_CODE39, czQR.BC_ITF];
       outer: for (const yFrac of [0.25, 0.5, 0.75]) {
         const y = Math.floor(h * yFrac);
@@ -2403,8 +2426,8 @@ class czQR {
           if (runs && runs.length >= 10) {
             const r = czQR._bc_decodeScanline(runs, bcFmt);
             if (r && (r.format !== czQR.BC_ITF || r.checksumValid)) {
-              addResult(r);
-              needsDeepScan = true;
+              if (addResult(r)) earlyData.add(r.data);
+              needsDeepBarcode = true;
               break outer;
             }
           }
@@ -2412,9 +2435,8 @@ class czQR {
       }
     }
 
-    // ═══ Step 3: Deep scan (only if multiple codes detected) ═══
-    if (needsDeepScan) {
-      // Sub-region QR scanning
+    // ═══ Step 3: Deep QR scan (only if multiple QR finder groups) ═══
+    if (needsDeepQR) {
       const regions = [
         [0, 0, Math.floor(w/2), h], [Math.floor(w/2), 0, w - Math.floor(w/2), h],
         [0, 0, w, Math.floor(h/2)], [0, Math.floor(h/2), w, h - Math.floor(h/2)],
@@ -2423,6 +2445,15 @@ class czQR {
         [0, Math.floor(h/2), Math.floor(w/2), h - Math.floor(h/2)],
         [Math.floor(w/2), Math.floor(h/2), w - Math.floor(w/2), h - Math.floor(h/2)]
       ];
+      // Track QR finder positions for dedup
+      const qrCenters = [];
+      // Add Step 1 QR if found
+      for (const res of results) {
+        if (res.format === 'qr' && res.points) {
+          const p = res.points;
+          qrCenters.push({ x: (p[0].x + p[1].x + p[2].x) / 3, y: (p[0].y + p[1].y + p[2].y) / 3, data: res.data });
+        }
+      }
       for (const [rx, ry, rw, rh] of regions) {
         if (rw < 50 || rh < 50) continue;
         try {
@@ -2432,14 +2463,59 @@ class czQR {
             const dstOff = y * rw * 4;
             sub.data.set(imgData.data.subarray(srcOff, srcOff + rw * 4), dstOff);
           }
-          addResult(czQR.read(sub));
-          sub = null; // Allow GC to collect sub-region data early
+          const r = czQR.read(sub);
+          sub = null;
+          if (r && r.format === 'qr') {
+            // Offset points from sub-region to full-image coordinates
+            if (r.points) {
+              for (const p of r.points) { p.x += rx; p.y += ry; }
+            }
+            // Dedup: skip if same data or same position as existing QR
+            const cx = r.points ? (r.points[0].x + r.points[1].x + r.points[2].x) / 3 : 0;
+            const cy = r.points ? (r.points[0].y + r.points[1].y + r.points[2].y) / 3 : 0;
+            const minDim = Math.min(w, h);
+            let isDup = false;
+            for (const qc of qrCenters) {
+              // Same data = same QR from overlapping region
+              if (qc.data === r.data) {
+                isDup = true;
+                // Update existing result's points with sub-region (often more accurate)
+                if (r.points) {
+                  const existing = results.find(x => x.data === r.data && x.format === 'qr');
+                  if (existing) existing.points = r.points;
+                  qc.x = cx; qc.y = cy;
+                }
+                break;
+              }
+              // Different data but same position
+              const dist = Math.abs(qc.x - cx) + Math.abs(qc.y - cy);
+              if (dist < minDim * 0.12) { isDup = true; break; }
+            }
+            if (!isDup) {
+              addResult(r);
+              qrCenters.push({ x: cx, y: cy, data: r.data });
+            }
+          }
         } catch (e) {}
       }
+    }
 
-      // Full barcode scanning
+    // ═══ Step 4: Deep barcode scan ═══
+    if (needsDeepBarcode) {
       const bcResults = czQR._bc_scanImageAll(imgData);
-      for (const bc of bcResults) addResult(bc);
+      for (const bc of bcResults) {
+        // Skip results already found in earlier steps (same physical barcode)
+        // But update their bounds with the more accurate region-detected bounds
+        if (earlyData.has(bc.data)) {
+          earlyData.delete(bc.data);
+          if (bc.bounds) {
+            const existing = results.find(r => r.data === bc.data && r.format !== 'qr');
+            if (existing) existing.bounds = bc.bounds;
+          }
+          continue;
+        }
+        addResult(bc);
+      }
     }
 
     return results;
@@ -2616,71 +2692,174 @@ class czQR {
   /** @internal Scan image for ALL barcodes (not just first match) */
   static _bc_scanImageAll(imgData, formats) {
     if (!formats || !formats.length) formats = [czQR.BC_EAN13, czQR.BC_EAN8, czQR.BC_UPCA, czQR.BC_UPCE, czQR.BC_CODE128, czQR.BC_CODE39, czQR.BC_ITF, czQR.BC_CODABAR];
-    const { width, height } = imgData;
-    const yFractions = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
+    const { width, height, data } = imgData;
     const results = [];
-    const seen = new Set();
+    const foundAt = [];
+    const DEDUP_DIST = 0.10;
 
-    const tryDecode = (runs) => {
-      if (!runs || runs.length < 10) return;
-      const addIfValid = (r) => {
-        if (!r || seen.has(r.data)) return;
-        // Reject ITF with invalid checksum (likely false positive)
-        if (r.format === czQR.BC_ITF && !r.checksumValid) return;
-        results.push(r); seen.add(r.data);
-      };
-      addIfValid(czQR._bc_decodeScanline(runs, formats));
-      addIfValid(czQR._bc_decodeScanline([...runs].reverse(), formats));
+    const addIfValid = (r, yFrac, bounds) => {
+      if (!r) return;
+      if (r.format === czQR.BC_ITF && !r.checksumValid) return;
+      for (const f of foundAt) {
+        if (f.data === r.data && Math.abs(f.y - yFrac) < DEDUP_DIST) return;
+      }
+      if (bounds) r.bounds = bounds;
+      results.push(r);
+      foundAt.push({ data: r.data, y: yFrac });
     };
 
-    // Scan full-width lines
-    for (const yFrac of yFractions) {
-      const y = Math.floor(height * yFrac);
-      const lumaRow = czQR._bc_getLumaRow(imgData, y);
-      const binRow = czQR._bc_binarizeRow(lumaRow);
-      tryDecode(czQR._bc_runLengthEncode(binRow));
-    }
+    const decodeLine = (scanY, x1, x2, yFrac, bounds) => {
+      const w = x2 - x1;
+      if (w < 50 || scanY < 0 || scanY >= height) return;
+      const segLuma = new Uint8Array(w);
+      for (let x = 0; x < w; x++) {
+        const i = (scanY * width + x1 + x) * 4;
+        segLuma[x] = (data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) / 1000;
+      }
 
-    // Scan in horizontal segments (for side-by-side barcodes)
-    const segments = 3;
-    for (const yFrac of [0.25, 0.5, 0.75]) {
-      const y = Math.floor(height * yFrac);
-      for (let seg = 0; seg < segments; seg++) {
-        const xStart = Math.floor(width * seg / segments);
-        const xEnd = Math.floor(width * (seg + 1) / segments);
-        const segWidth = xEnd - xStart;
-        if (segWidth < 50) continue;
-        const segLuma = new Uint8Array(segWidth);
-        const d = imgData.data;
-        const offset = y * width * 4;
-        for (let x = 0; x < segWidth; x++) {
-          const i = offset + (xStart + x) * 4;
-          segLuma[x] = (d[i] * 299 + d[i+1] * 587 + d[i+2] * 114) / 1000;
+      // Tight bounds from binRow
+      const computeBounds = (binRow) => {
+        let fb2 = -1, lb2 = -1;
+        for (let i = 0; i < w; i++) { if (binRow[i]) { fb2 = i; break; } }
+        for (let i = w - 1; i >= 0; i--) { if (binRow[i]) { lb2 = i; break; } }
+        if (fb2 < 0 || lb2 <= fb2) return bounds || { x: x1, y: Math.max(0, scanY - 20), w: w, h: 40 };
+        const barW = lb2 - fb2;
+        const margin = Math.max(6, Math.floor(barW * 0.06));
+        const bx = x1 + Math.max(0, fb2 - margin);
+        const bw = Math.min(width - bx, barW + margin * 2);
+        const bh = Math.max(30, Math.floor(bw * 0.35));
+        return { x: bx, y: Math.max(0, scanY - Math.floor(bh / 2)), w: bw, h: bh };
+      };
+
+      const tryDecode = (binRow) => {
+        const runs = czQR._bc_runLengthEncode(binRow);
+        if (!runs || runs.length < 10) return;
+        const mb = () => computeBounds(binRow);
+        const r1 = czQR._bc_decodeScanline(runs, formats);
+        if (r1) addIfValid(r1, yFrac, mb());
+        const r2 = czQR._bc_decodeScanline([...runs].reverse(), formats);
+        if (r2) addIfValid(r2, yFrac, mb());
+      };
+
+      // Method 1: Adaptive threshold binarization
+      const binAdaptive = czQR._bc_binarizeRow(segLuma);
+      tryDecode(binAdaptive);
+
+      // Method 2: Global threshold binarization (handles dark backgrounds better)
+      let gMin = 255, gMax = 0;
+      for (let i = 0; i < w; i++) {
+        if (segLuma[i] < gMin) gMin = segLuma[i];
+        if (segLuma[i] > gMax) gMax = segLuma[i];
+      }
+      if (gMax - gMin > 80) {
+        const gThresh = gMin + (gMax - gMin) * 0.45;
+        const binGlobal = new Uint8Array(w);
+        for (let i = 0; i < w; i++) binGlobal[i] = segLuma[i] <= gThresh ? 1 : 0;
+        tryDecode(binGlobal);
+      }
+    };
+
+    // ═══ Phase 1: Detect barcode regions via vertical edge density ═══
+    const BLOCK = Math.max(8, Math.min(32, Math.floor(Math.min(width, height) / 40)));
+    const gridW = Math.ceil(width / BLOCK);
+    const gridH = Math.ceil(height / BLOCK);
+    const density = new Float32Array(gridW * gridH);
+
+    for (let by = 0; by < gridH; by++) {
+      const yStart = by * BLOCK, yEnd = Math.min(yStart + BLOCK, height);
+      for (let bx = 0; bx < gridW; bx++) {
+        const xStart = bx * BLOCK, xEnd = Math.min(xStart + BLOCK, width - 1);
+        let sum = 0, count = 0;
+        for (let y = yStart; y < yEnd; y++) {
+          for (let x = xStart; x < xEnd; x++) {
+            const i = (y * width + x) * 4;
+            const j = i + 4;
+            sum += Math.abs(
+              (data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) -
+              (data[j] * 299 + data[j+1] * 587 + data[j+2] * 114)
+            );
+            count++;
+          }
         }
-        const segBin = czQR._bc_binarizeRow(segLuma);
-        tryDecode(czQR._bc_runLengthEncode(segBin));
+        density[by * gridW + bx] = count > 0 ? sum / count / 1000 : 0;
       }
     }
 
-    // Scan at limited angles for rotated barcodes (only 90° vertical)
-    const angles = [
-      Math.PI / 2     //  90° (vertical barcode)
-    ];
-    for (const angle of angles) {
-      const cos = Math.cos(angle), sin = Math.sin(angle);
-      const isVertical = Math.abs(sin) > Math.abs(cos);
-      const starts = [];
-      if (isVertical) {
-        for (const f of [0.2, 0.5, 0.8]) starts.push([Math.floor(width * f), 0]);
-      } else {
-        for (const f of [0.2, 0.5, 0.8]) starts.push([0, Math.floor(height * f)]);
+    // Adaptive threshold
+    let total = 0;
+    for (let i = 0; i < density.length; i++) total += density[i];
+    const mean = total / density.length;
+    const edgeThreshold = Math.max(mean * 1.8, 8);
+
+    // ═══ Phase 2: Connected-component labeling → barcode regions ═══
+    const visited = new Uint8Array(gridW * gridH);
+    const regions = [];
+
+    for (let by = 0; by < gridH; by++) {
+      for (let bx = 0; bx < gridW; bx++) {
+        const idx = by * gridW + bx;
+        if (density[idx] < edgeThreshold || visited[idx]) continue;
+        visited[idx] = 1;
+        const queue = [[bx, by]];
+        let minBX = bx, maxBX = bx, minBY = by, maxBY = by;
+        let qi = 0;
+        while (qi < queue.length) {
+          const [cx, cy] = queue[qi++];
+          if (cx < minBX) minBX = cx; if (cx > maxBX) maxBX = cx;
+          if (cy < minBY) minBY = cy; if (cy > maxBY) maxBY = cy;
+          for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]) {
+            const nx = cx + dx, ny = cy + dy;
+            if (nx < 0 || nx >= gridW || ny < 0 || ny >= gridH) continue;
+            const ni = ny * gridW + nx;
+            if (visited[ni] || density[ni] < edgeThreshold) continue;
+            visited[ni] = 1;
+            queue.push([nx, ny]);
+          }
+        }
+        const pad = 3;
+        const px = Math.max(0, (minBX - pad) * BLOCK);
+        const py = Math.max(0, (minBY - pad) * BLOCK);
+        const pw = Math.min(width, (maxBX + 1 + pad) * BLOCK) - px;
+        const ph = Math.min(height, (maxBY + 1 + pad) * BLOCK) - py;
+        if (pw >= 30 && ph >= 10) {
+          regions.push({ x: px, y: py, w: pw, h: ph });
+        }
       }
-      for (const [x0, y0] of starts) {
-        const lumaLine = czQR._bc_getLumaLine(imgData, x0, y0, cos, sin);
-        if (lumaLine.length < 50) continue;
-        const binLine = czQR._bc_binarizeRow(lumaLine);
-        tryDecode(czQR._bc_runLengthEncode(binLine));
+    }
+
+    // ═══ Phase 3: Decode each detected region ═══
+    for (const reg of regions) {
+      const yFrac = (reg.y + reg.h / 2) / height;
+      const bounds = { x: reg.x, y: reg.y, w: reg.w, h: reg.h };
+      for (const yOff of [0.2, 0.35, 0.5, 0.65, 0.8]) {
+        const scanY = Math.floor(reg.y + reg.h * yOff);
+        decodeLine(scanY, reg.x, reg.x + reg.w, yFrac, bounds);
+        // For wide regions, also scan sub-sections to find middle barcodes
+        if (reg.w > width * 0.35) {
+          const third = Math.floor(reg.w / 3);
+          const overlap = Math.floor(third * 0.15);
+          decodeLine(scanY, reg.x, reg.x + third + overlap, yFrac, null);
+          decodeLine(scanY, reg.x + third - overlap, reg.x + 2 * third + overlap, yFrac, null);
+          decodeLine(scanY, reg.x + 2 * third - overlap, reg.x + reg.w, yFrac, null);
+        }
       }
+    }
+
+    // ═══ Phase 4: Dense full-width + sub-section fallback ═══
+    const third = Math.floor(width / 3);
+    const half = Math.floor(width / 2);
+    const ovr = Math.floor(third * 0.12);
+    for (let yp = 5; yp <= 95; yp += 5) {
+      const yFrac = yp / 100;
+      const scanY = Math.floor(height * yFrac);
+      decodeLine(scanY, 0, width, yFrac, null);
+      // Halves
+      decodeLine(scanY, 0, half + ovr, yFrac, null);
+      decodeLine(scanY, half - ovr, width, yFrac, null);
+      // Thirds
+      decodeLine(scanY, 0, third + ovr, yFrac, null);
+      decodeLine(scanY, third - ovr, 2 * third + ovr, yFrac, null);
+      decodeLine(scanY, 2 * third - ovr, width, yFrac, null);
     }
 
     return results;
@@ -2739,13 +2918,31 @@ class czQR {
       const runs = czQR._bc_runLengthEncode(binRow);
       if (!runs || runs.length < 10) continue;
 
+      // Calculate tight bounds from binRow
+      const calcBounds = () => {
+        let fb = -1, lb = -1;
+        for (let i = 0; i < width; i++) { if (binRow[i]) { fb = i; break; } }
+        for (let i = width - 1; i >= 0; i--) { if (binRow[i]) { lb = i; break; } }
+        if (fb < 0 || lb <= fb) return { x: 0, y: Math.max(0, y - 30), w: width, h: 60 };
+        const bw = lb - fb;
+        const margin = Math.max(6, Math.floor(bw * 0.06));
+        const bh = Math.max(30, Math.floor(bw * 0.35));
+        return { x: Math.max(0, fb - margin), y: Math.max(0, y - Math.floor(bh / 2)), w: Math.min(width, bw + margin * 2), h: bh };
+      };
+
       let result = czQR._bc_decodeScanline(runs, formats);
-      if (result) return result;
+      if (result) {
+        result.bounds = calcBounds();
+        return result;
+      }
 
       // Try reverse (right-to-left scan)
       const reversedRuns = [...runs].reverse();
       result = czQR._bc_decodeScanline(reversedRuns, formats);
-      if (result) return result;
+      if (result) {
+        result.bounds = calcBounds();
+        return result;
+      }
     }
     
     // Diagonal scanning could go here, but omitted for brevity in core 1D implementation unless requested
@@ -3181,7 +3378,8 @@ class czQR {
       // Need at least * + 1 char + * 
       if (chars.length >= 3 && chars[0] === '*' && chars[chars.length - 1] === '*') {
         const data = chars.slice(1, -1).join('');
-        if (data.length > 0) {
+        // Reject if data contains '*' — indicates false merge of adjacent Code-39 barcodes
+        if (data.length > 0 && !data.includes('*')) {
           return { data: data, format: czQR.BC_CODE39, type: '1d', checksumValid: true };
         }
       }
@@ -3200,7 +3398,7 @@ class czQR {
       if (startIdx > 0) {
         const prevRun = runs[startIdx - 1];
         const startNarrow = (runs[startIdx].len + runs[startIdx+1].len + runs[startIdx+2].len + runs[startIdx+3].len) / 4;
-        if (prevRun.v !== 0 || prevRun.len < startNarrow * 4) continue; // insufficient quiet zone
+        if (prevRun.v !== 0 || prevRun.len < startNarrow * 3) continue; // insufficient quiet zone
       }
       
       const startRuns = [runs[startIdx].len, runs[startIdx+1].len, runs[startIdx+2].len, runs[startIdx+3].len];
