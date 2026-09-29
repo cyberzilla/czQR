@@ -2617,7 +2617,7 @@ class czQR {
   static _bc_scanImageAll(imgData, formats) {
     if (!formats || !formats.length) formats = [czQR.BC_EAN13, czQR.BC_EAN8, czQR.BC_UPCA, czQR.BC_UPCE, czQR.BC_CODE128, czQR.BC_CODE39, czQR.BC_ITF, czQR.BC_CODABAR];
     const { width, height } = imgData;
-    const yFractions = [0.15, 0.2, 0.25, 0.3, 0.35, 0.4, 0.45, 0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85];
+    const yFractions = [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8];
     const results = [];
     const seen = new Set();
 
@@ -2642,8 +2642,8 @@ class czQR {
     }
 
     // Scan in horizontal segments (for side-by-side barcodes)
-    const segments = 4;
-    for (const yFrac of [0.15, 0.25, 0.35, 0.45, 0.55, 0.65, 0.75, 0.85]) {
+    const segments = 3;
+    for (const yFrac of [0.25, 0.5, 0.75]) {
       const y = Math.floor(height * yFrac);
       for (let seg = 0; seg < segments; seg++) {
         const xStart = Math.floor(width * seg / segments);
@@ -2662,26 +2662,18 @@ class czQR {
       }
     }
 
-    // Scan at various angles for rotated/diagonal barcodes
+    // Scan at limited angles for rotated barcodes (only 90° vertical)
     const angles = [
-      Math.PI / 12,   //  15°
-      -Math.PI / 12,  // -15°
-      Math.PI / 6,    //  30°
-      -Math.PI / 6,   // -30°
-      Math.PI / 4,    //  45°
-      -Math.PI / 4,   // -45°
-      Math.PI / 2     //  90° (vertical)
+      Math.PI / 2     //  90° (vertical barcode)
     ];
     for (const angle of angles) {
       const cos = Math.cos(angle), sin = Math.sin(angle);
       const isVertical = Math.abs(sin) > Math.abs(cos);
       const starts = [];
       if (isVertical) {
-        // More vertical — start from top edge at different x positions
-        for (const f of [0.15, 0.3, 0.5, 0.7, 0.85]) starts.push([Math.floor(width * f), 0]);
+        for (const f of [0.2, 0.5, 0.8]) starts.push([Math.floor(width * f), 0]);
       } else {
-        // More horizontal — start from left edge at different y positions
-        for (const f of [0.15, 0.3, 0.5, 0.7, 0.85]) starts.push([0, Math.floor(height * f)]);
+        for (const f of [0.2, 0.5, 0.8]) starts.push([0, Math.floor(height * f)]);
       }
       for (const [x0, y0] of starts) {
         const lumaLine = czQR._bc_getLumaLine(imgData, x0, y0, cos, sin);
@@ -3203,6 +3195,14 @@ class czQR {
     for (let startIdx = 0; startIdx < runs.length - 10; startIdx++) {
       if (runs[startIdx].v !== 1) continue;
       
+      // Quiet zone check: require a white space before the start pattern
+      // that is at least 6x the average narrow bar width (ISO/IEC 16390)
+      if (startIdx > 0) {
+        const prevRun = runs[startIdx - 1];
+        const startNarrow = (runs[startIdx].len + runs[startIdx+1].len + runs[startIdx+2].len + runs[startIdx+3].len) / 4;
+        if (prevRun.v !== 0 || prevRun.len < startNarrow * 4) continue; // insufficient quiet zone
+      }
+      
       const startRuns = [runs[startIdx].len, runs[startIdx+1].len, runs[startIdx+2].len, runs[startIdx+3].len];
       if (!czQR._bc_patternMatch(startRuns, [1,1,1,1], 0.7)) continue;
       
@@ -3217,6 +3217,8 @@ class czQR {
         const decodePair = (widths) => {
           let sorted = [...widths].sort((a,b)=>a-b);
           let threshold = (sorted[2] + sorted[3]) / 2;
+          // Require clear wide/narrow distinction — ratio must be at least 1.8:1
+          if (sorted[3] < sorted[1] * 1.8) return -1;
           let w = widths.map(x => x > threshold ? 'W' : 'n');
           for (let i = 0; i < 10; i++) {
             if (czQR._ITF_PATTERNS[i].join('') === w.join('')) return i;
@@ -3233,7 +3235,9 @@ class czQR {
         idx += 10;
       }
       
-      if (digits.length >= 12 && idx + 2 < runs.length) {
+      // ITF always encodes even number of digits; ITF-14 is 14 digits
+      // Minimum 6 digits to reduce false positives (most ITF uses 14+)
+      if (digits.length >= 6 && digits.length % 2 === 0 && idx + 2 < runs.length) {
         const endRuns = [runs[idx].len, runs[idx+1].len, runs[idx+2].len];
         let sorted = [...endRuns].sort((a,b)=>a-b);
         let threshold = (sorted[1] + sorted[2]) / 2;
@@ -3245,7 +3249,10 @@ class czQR {
             sum += digs[i] * ((digs.length - 1 - i) % 2 === 0 ? 1 : 3);
           }
           const checkValid = (10 - (sum % 10)) % 10 === digs[digs.length - 1];
-          return { data: digits, format: czQR.BC_ITF, type: '1d', checksumValid: checkValid };
+          // Only return if checksum is valid — reject false positives
+          if (checkValid) {
+            return { data: digits, format: czQR.BC_ITF, type: '1d', checksumValid: true };
+          }
         }
       }
     }
