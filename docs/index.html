@@ -1716,15 +1716,16 @@
                     const svgBlob = new Blob([lastBC.svg], {type: 'image/svg+xml'});
                     const url = URL.createObjectURL(svgBlob);
                     img.onload = () => {
-                        const w = img.naturalWidth || parseInt((lastBC.svg.match(/width="(\d+)"/) || [])[1]) || 800;
-                        const h = img.naturalHeight || parseInt((lastBC.svg.match(/height="(\d+)"/) || [])[1]) || 800;
-                        const s = Math.max(w, h, 800);
+                        const w = img.naturalWidth || parseInt((lastBC.svg.match(/width="(\d+)"/) || [])[1]) || 300;
+                        const h = img.naturalHeight || parseInt((lastBC.svg.match(/height="(\d+)"/) || [])[1]) || 300;
+                        const scale = Math.max(1, Math.ceil(800 / Math.max(w, h)));
+                        const cw = w * scale, ch = h * scale;
                         const cvs = document.createElement('canvas');
-                        cvs.width = s; cvs.height = s;
+                        cvs.width = cw; cvs.height = ch;
                         const ctx = cvs.getContext('2d');
                         ctx.fillStyle = '#ffffff';
-                        ctx.fillRect(0, 0, s, s);
-                        ctx.drawImage(img, (s - w) / 2, (s - h) / 2, w, h);
+                        ctx.fillRect(0, 0, cw, ch);
+                        ctx.drawImage(img, 0, 0, cw, ch);
                         URL.revokeObjectURL(url);
                         const ext = fmt === 'webp' ? 'webp' : 'png';
                         const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
