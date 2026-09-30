@@ -1230,6 +1230,13 @@
                         } else {
                             const r = czQR.read(imageData);
                             if (r && r.data) results = [r];
+                            // Also try Data Matrix if no QR/barcode found
+                            if (!results.length) {
+                                try {
+                                    const dm = czQR.readDataMatrix(imageData);
+                                    if (dm && dm.data) results = [dm];
+                                } catch(e) {}
+                            }
                         }
 
                         // Clear detection overlay
@@ -1286,8 +1293,8 @@
 
                             // Show results
                             if (results.length === 1) {
-                                showResult(results[0].data, 'Camera', results[0].format);
-                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
+                                showResult(results[0].data, 'Camera', results[0].format, false, results[0]);
+                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : results[0].format === 'datamatrix' ? 'Data Matrix' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
                             } else {
                                 showMultiResults(results, 'Camera');
                                 toast('✓ ' + results.length + ' codes detected!');
@@ -1345,7 +1352,7 @@
             }
 
             // === Result ===
-            function showResult(text, source, format, fromHistory) {
+            function showResult(text, source, format, fromHistory, extra) {
                 resultEmpty.style.display = 'none';
                 resultFound.style.display = 'block';
                 resultText.textContent = text;
@@ -1366,14 +1373,21 @@
                 // Meta info
                 const now = new Date();
                 const type = detectType(text);
-                const fmtLabel = format === 'qr' ? 'QR Code' : (format || 'Unknown').toUpperCase();
-                resultMeta.innerHTML = `
+                const fmtLabel = format === 'qr' ? 'QR Code' : (format === 'datamatrix' ? 'DATA MATRIX' : (format || 'Unknown').toUpperCase());
+                let metaHTML = `
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>Format: ${fmtLabel}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--cy)"></div>Type: ${type}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--em)"></div>Length: ${text.length} chars</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--am)"></div>Source: ${source}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>${now.toLocaleTimeString()}</div>
                 `;
+                if (extra && extra.modes) {
+                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--cy)"></div>Mode: ${extra.modes.join(' → ')}</div>`;
+                }
+                if (extra && extra.symbol) {
+                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--em)"></div>Symbol: ${extra.symbol}</div>`;
+                }
+                resultMeta.innerHTML = metaHTML;
 
                 // Add to history (avoid duplicates in sequence, skip if from history click)
                 if (!fromHistory && text !== lastResult) {
@@ -1387,7 +1401,7 @@
             function showMultiResults(results, source) {
                 if (!results || results.length === 0) return;
                 if (results.length === 1) {
-                    showResult(results[0].data, source, results[0].format);
+                    showResult(results[0].data, source, results[0].format, false, results[0]);
                     return;
                 }
                 resultEmpty.style.display = 'none';
@@ -1397,7 +1411,7 @@
                 let html = '';
                 const now = new Date();
                 results.forEach((r, i) => {
-                    const fmtLabel = r.format === 'qr' ? 'QR Code' : (r.format || 'Unknown').toUpperCase();
+                    const fmtLabel = r.format === 'qr' ? 'QR Code' : (r.format === 'datamatrix' ? 'DATA MATRIX' : (r.format || 'Unknown').toUpperCase());
                     const type = detectType(r.data);
                     let linkBtn = '';
                     try {
@@ -1532,8 +1546,9 @@
                                 const results = czQR.readAll(img);
                                 if (results.length > 0) {
                                     if (results.length === 1) {
-                                        showResult(results[0].data, 'File', results[0].format);
-                                        toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' decoded!');
+                                        showResult(results[0].data, 'File', results[0].format, false, results[0]);
+                                        const fmtLabel = results[0].format === 'qr' ? 'QR Code' : results[0].format === 'datamatrix' ? 'Data Matrix' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']';
+                                        toast('✓ ' + fmtLabel + ' decoded!');
                                     } else {
                                         showMultiResults(results, 'File');
                                         toast('✓ ' + results.length + ' codes decoded!');

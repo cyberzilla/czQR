@@ -2775,6 +2775,1141 @@ class czQR {
   }
 
   // ════════════════════════════════════════════════════════════════════════
+  // datamatrix-encode.js — Data Matrix ECC200 generation
+  // Based on etiket reference (MIT) — rewritten for czQR
+  // ════════════════════════════════════════════════════════════════════════
+
+  // ── Symbol size table ──
+  // [rows, cols, dataRegionRows, dataRegionCols, totalData, ecCW, blocks]
+  static _DM_SIZES = [
+    [10,10,8,8,3,5,1],[12,12,10,10,5,7,1],[14,14,12,12,8,10,1],
+    [16,16,14,14,12,12,1],[18,18,16,16,18,14,1],[20,20,18,18,22,18,1],
+    [22,22,20,20,30,20,1],[24,24,22,22,36,24,1],[26,26,24,24,44,28,1],
+    [32,32,14,14,62,36,1],[36,36,16,16,86,42,1],[40,40,18,18,114,48,1],
+    [44,44,20,20,144,56,1],[48,48,22,22,174,68,1],[52,52,24,24,204,84,2],
+    [64,64,14,14,280,112,2],[72,72,16,16,368,144,4],[80,80,18,18,456,192,4],
+    [88,88,20,20,576,224,4],[96,96,22,22,696,272,4],[104,104,24,24,816,336,6],
+    [120,120,18,18,1050,408,6],[132,132,20,20,1304,496,8],[144,144,22,22,1558,620,10],
+  ];
+
+  // ── GF(256) tables (poly 301 = 0x12D) ──
+  static _DM_EXP = null;
+  static _DM_LOG = null;
+
+  static _dm_initGF() {
+    if (czQR._DM_EXP) return;
+    const exp = new Uint8Array(512);
+    const log = new Uint8Array(256);
+    let x = 1;
+    for (let i = 0; i < 255; i++) {
+      exp[i] = x;
+      log[x] = i;
+      x <<= 1;
+      if (x >= 256) x ^= 0x12d;
+    }
+    for (let i = 255; i < 512; i++) exp[i] = exp[i - 255];
+    czQR._DM_EXP = exp;
+    czQR._DM_LOG = log;
+  }
+
+  // ── ASCII encoding ──
+  static _dm_encodeASCII(text) {
+    const cw = [];
+    let i = 0;
+    while (i < text.length) {
+      const c = text.charCodeAt(i);
+      if (c > 255) throw new Error(`Data Matrix: unsupported char U+${c.toString(16)}`);
+      if (c >= 48 && c <= 57 && i + 1 < text.length) {
+        const c2 = text.charCodeAt(i + 1);
+        if (c2 >= 48 && c2 <= 57) {
+          cw.push((c - 48) * 10 + (c2 - 48) + 130);
+          i += 2;
+          continue;
+        }
+      }
+      if (c >= 128) { cw.push(235); cw.push(c - 127); }
+      else cw.push(c + 1);
+      i++;
+    }
+    return cw;
+  }
+
+  // ── Encoding values for C40/TEXT/X12 ──
+  static _c40Value(ch) {
+    if (ch === 32) return { set: 0, value: 3 };
+    if (ch >= 48 && ch <= 57) return { set: 0, value: ch - 48 + 4 };
+    if (ch >= 65 && ch <= 90) return { set: 0, value: ch - 65 + 14 };
+    if (ch >= 0 && ch <= 31) return { set: 1, value: ch };
+    if (ch >= 33 && ch <= 47) return { set: 2, value: ch - 33 };
+    if (ch >= 58 && ch <= 64) return { set: 2, value: ch - 58 + 15 };
+    if (ch >= 91 && ch <= 95) return { set: 2, value: ch - 91 + 22 };
+    if (ch >= 96 && ch <= 127) return { set: 3, value: ch - 96 };
+    return { set: -1, value: 0 };
+  }
+
+  static _textValue(ch) {
+    if (ch === 32) return { set: 0, value: 3 };
+    if (ch >= 48 && ch <= 57) return { set: 0, value: ch - 48 + 4 };
+    if (ch >= 97 && ch <= 122) return { set: 0, value: ch - 97 + 14 };
+    if (ch >= 0 && ch <= 31) return { set: 1, value: ch };
+    if (ch >= 33 && ch <= 47) return { set: 2, value: ch - 33 };
+    if (ch >= 58 && ch <= 64) return { set: 2, value: ch - 58 + 15 };
+    if (ch >= 91 && ch <= 95) return { set: 2, value: ch - 91 + 22 };
+    if (ch === 96) return { set: 3, value: 0 };
+    if (ch >= 65 && ch <= 90) return { set: 3, value: ch - 65 + 1 };
+    if (ch >= 123 && ch <= 127) return { set: 3, value: ch - 123 + 27 };
+    return { set: -1, value: 0 };
+  }
+
+  static _x12Value(ch) {
+    if (ch === 13) return { set: 0, value: 0 };
+    if (ch === 42) return { set: 0, value: 1 };
+    if (ch === 62) return { set: 0, value: 2 };
+    if (ch === 32) return { set: 0, value: 3 };
+    if (ch >= 48 && ch <= 57) return { set: 0, value: ch - 48 + 4 };
+    if (ch >= 65 && ch <= 90) return { set: 0, value: ch - 65 + 14 };
+    return { set: -1, value: 0 };
+  }
+
+  static _dm_triplet(a, b, c) {
+    const v = a * 1600 + b * 40 + c + 1;
+    return [Math.floor(v / 256), v % 256];
+  }
+
+  static _dm_encodeC40Text(text, latchCW, valueFn) {
+    const values = [];
+    const valueCharIndex = [];
+    let fallbackFrom = text.length;
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text.charCodeAt(i);
+      const { set, value } = valueFn(ch);
+      if (set === -1) {
+        fallbackFrom = i;
+        break;
+      }
+      if (set > 0) {
+        values.push(set - 1);
+        valueCharIndex.push(i);
+        values.push(value);
+        valueCharIndex.push(i);
+      } else {
+        values.push(value);
+        valueCharIndex.push(i);
+      }
+    }
+
+    const split = values.length - (values.length % 3);
+    const head = [latchCW];
+    for (let i = 0; i < split; i += 3) {
+      head.push(...czQR._dm_triplet(values[i], values[i + 1], values[i + 2]));
+    }
+    const rest = values.slice(split);
+    const asciiFrom = rest.length > 0 ? Math.min(valueCharIndex[split], fallbackFrom) : fallbackFrom;
+    
+    let shortest = head.slice();
+    if (fallbackFrom >= text.length) {
+      if (rest.length === 0) {
+        // Fits exact
+      } else if (rest.length === 2) {
+        shortest.push(...czQR._dm_triplet(rest[0], rest[1], 0));
+      } else if (asciiFrom === text.length - 1 && valueCharIndex[values.length - 2] !== asciiFrom) {
+        shortest.push(...czQR._dm_encodeASCII(text.slice(asciiFrom)));
+      } else {
+        shortest.push(254);
+        if (asciiFrom < text.length) shortest.push(...czQR._dm_encodeASCII(text.slice(asciiFrom)));
+      }
+    } else {
+      shortest.push(254);
+      if (asciiFrom < text.length) shortest.push(...czQR._dm_encodeASCII(text.slice(asciiFrom)));
+    }
+    return shortest;
+  }
+
+  static _dm_encodeC40(text) {
+    return czQR._dm_encodeC40Text(text, 230, czQR._c40Value);
+  }
+
+  static _dm_encodeText(text) {
+    return czQR._dm_encodeC40Text(text, 239, czQR._textValue);
+  }
+
+  static _dm_encodeX12(text) {
+    if (text.length === 0 || text.length % 3 !== 0) return undefined;
+    const values = [];
+    for (let i = 0; i < text.length; i++) {
+      const { set, value } = czQR._x12Value(text.charCodeAt(i));
+      if (set === -1) return undefined;
+      values.push(value);
+    }
+    const head = [238];
+    for (let i = 0; i < values.length; i += 3) {
+      head.push(...czQR._dm_triplet(values[i], values[i + 1], values[i + 2]));
+    }
+    head.push(254);
+    return head;
+  }
+
+  static _dm_edifactQuads(values) {
+    const codewords = [];
+    for (let i = 0; i < values.length; i += 4) {
+      const count = Math.min(4, values.length - i);
+      const packed =
+        ((values[i] || 0) << 18) |
+        ((values[i + 1] || 0) << 12) |
+        ((values[i + 2] || 0) << 6) |
+        (values[i + 3] || 0);
+      codewords.push((packed >> 16) & 0xff);
+      if (count >= 2) codewords.push((packed >> 8) & 0xff);
+      if (count >= 3) codewords.push(packed & 0xff);
+    }
+    return codewords;
+  }
+
+  static _dm_encodeEDIFACT(text) {
+    if (text.length === 0) return undefined;
+    const values = [];
+    for (let i = 0; i < text.length; i++) {
+      const code = text.charCodeAt(i);
+      if (code < 32 || code > 94) return undefined;
+      values.push(code & 0x3f);
+    }
+    values.push(31); // unlatch
+    return [240, ...czQR._dm_edifactQuads(values)];
+  }
+
+  static _dm_randomize255(value, position) {
+    const pseudoRandom = ((149 * position) % 255) + 1;
+    const result = value + pseudoRandom;
+    return result <= 255 ? result : result - 256;
+  }
+
+  static _dm_encodeBase256(bytes, startPos = 1) {
+    const data = Array.from(bytes);
+    const codewords = [231];
+    let position = startPos + 1;
+
+    if (data.length < 250) {
+      codewords.push(czQR._dm_randomize255(data.length, position++));
+    } else {
+      codewords.push(czQR._dm_randomize255(Math.floor(data.length / 250) + 249, position++));
+      codewords.push(czQR._dm_randomize255(data.length % 250, position++));
+    }
+
+    for (const byte of data) {
+      codewords.push(czQR._dm_randomize255(byte, position++));
+    }
+
+    return codewords;
+  }
+
+  static _dm_encodeECI(eci) {
+    if (!Number.isInteger(eci) || eci < 0 || eci > 999999) {
+      throw new Error("Data Matrix ECI assignment number must be 0-999999");
+    }
+    if (eci <= 126) return [241, eci + 1];
+    if (eci <= 16382) {
+      const value = eci - 127;
+      return [241, Math.floor(value / 254) + 128, (value % 254) + 1];
+    }
+    const value = eci - 16383;
+    return [
+      241,
+      Math.floor(value / 64516) + 192,
+      (Math.floor(value / 254) % 254) + 1,
+      (value % 254) + 1,
+    ];
+  }
+
+  static _dm_optimizeEncoding(text) {
+    const length = text.length;
+    let hasNonLatin1 = false;
+    for (let i = 0; i < length; i++) {
+      if (text.codePointAt(i) > 0xff) {
+        hasNonLatin1 = true; break;
+      }
+    }
+    if (hasNonLatin1) {
+      let encoder;
+      if (typeof TextEncoder !== 'undefined') encoder = new TextEncoder();
+      else if (typeof require !== 'undefined') encoder = new (require('util').TextEncoder)();
+      if (encoder) {
+        const bytes = encoder.encode(text);
+        const eci = czQR._dm_encodeECI(26);
+        return [...eci, ...czQR._dm_encodeBase256(bytes, eci.length + 1)];
+      }
+    }
+
+    const MIXED_MODES = [
+      { latch: 230, group: 3, emitted: 2 }, // C40
+      { latch: 239, group: 3, emitted: 2 }, // Text
+      { latch: 238, group: 3, emitted: 2 }, // X12
+      { latch: 240, group: 4, emitted: 3 }, // EDIFACT
+    ];
+    const MIXED_STATES = 14;
+    const MIXED_BASE = [1, 4, 7, 10];
+    const UNREACHABLE = 1e9;
+
+    function mixedState(mode, pending) { return MIXED_BASE[mode] + pending; }
+
+    function mixedValues(mode, charCode) {
+      if (mode === 2) {
+        const { set, value } = czQR._x12Value(charCode);
+        return set === -1 ? undefined : [value];
+      }
+      if (mode === 3) return charCode >= 32 && charCode <= 94 ? [charCode & 0x3f] : undefined;
+      const { set, value } = mode === 0 ? czQR._c40Value(charCode) : czQR._textValue(charCode);
+      if (set === -1) return undefined;
+      return set > 0 ? [set - 1, value] : [value];
+    }
+
+    function asciiStep(txt, at) {
+      const char = txt.charCodeAt(at);
+      const next = at + 1 < txt.length ? txt.charCodeAt(at + 1) : -1;
+      if (char >= 48 && char <= 57 && next >= 48 && next <= 57) return { cost: 1, advance: 2 };
+      return { cost: char >= 128 ? 2 : 1, advance: 1 };
+    }
+
+    const cost = new Float64Array((length + 1) * MIXED_STATES).fill(UNREACHABLE);
+    const from = new Int32Array((length + 1) * MIXED_STATES).fill(-1);
+    cost[0] = 0;
+
+    const relax = (at, state, total, advance, previous) => {
+      const slot = at * MIXED_STATES + state;
+      if (total >= cost[slot]) return;
+      cost[slot] = total;
+      from[slot] = (advance << 8) | previous;
+    };
+
+    for (let at = 0; at <= length; at++) {
+      const base = at * MIXED_STATES;
+      for (let round = 0; round < 2; round++) {
+        const ascii = cost[base];
+        for (let mode = 0; mode < MIXED_MODES.length; mode++) {
+          if (ascii < UNREACHABLE) relax(at, mixedState(mode, 0), ascii + 1, 0, 0);
+          const idle = cost[base + mixedState(mode, 0)];
+          if (idle < UNREACHABLE) relax(at, 0, idle + 1, 0, mixedState(mode, 0));
+        }
+      }
+      if (at === length) break;
+      const charCode = text.charCodeAt(at);
+      const ascii = cost[base];
+      if (ascii < UNREACHABLE) {
+        const { cost: step, advance } = asciiStep(text, at);
+        relax(at + advance, 0, ascii + step, advance, 0);
+      }
+      for (let mode = 0; mode < MIXED_MODES.length; mode++) {
+        const spec = MIXED_MODES[mode];
+        const values = mixedValues(mode, charCode);
+        if (!values) continue;
+        for (let pending = 0; pending < spec.group; pending++) {
+          const here = cost[base + mixedState(mode, pending)];
+          if (here >= UNREACHABLE) continue;
+          const held = pending + values.length;
+          const total = here + Math.floor(held / spec.group) * spec.emitted;
+          relax(at + 1, mixedState(mode, held % spec.group), total, 1, mixedState(mode, pending));
+        }
+      }
+    }
+
+    const build = (endState, terminate) => {
+      if (cost[length * MIXED_STATES + endState] >= UNREACHABLE) return undefined;
+      const route = new Array(length).fill(0);
+      let at = length;
+      let state = endState;
+      while (from[at * MIXED_STATES + state] !== -1) {
+        const packed = from[at * MIXED_STATES + state];
+        const advance = packed >> 8;
+        const previous = packed & 0xff;
+        for (let i = at - advance; i < at; i++) route[i] = previous;
+        at -= advance;
+        state = previous;
+      }
+
+      const codewords = [];
+      let head = 0;
+      let edifact = false;
+      let index = 0;
+      while (index < length) {
+        if (route[index] === 0) {
+          const { advance } = asciiStep(text, index);
+          codewords.push(...czQR._dm_encodeASCII(text.slice(index, index + advance)));
+          index += advance;
+          continue;
+        }
+        const mode = MIXED_BASE.findIndex(
+          (start, i) => route[index] >= start && route[index] < start + MIXED_MODES[i].group
+        );
+        const spec = MIXED_MODES[mode];
+        let end = index;
+        while (
+          end < length &&
+          route[end] >= MIXED_BASE[mode] &&
+          route[end] < MIXED_BASE[mode] + spec.group
+        ) {
+          end++;
+        }
+
+        const values = [];
+        for (let i = index; i < end; i++) values.push(...mixedValues(mode, text.charCodeAt(i)));
+        codewords.push(spec.latch);
+        const last = end === length;
+        if (spec.group === 3) {
+          for (let i = 0; i < values.length; i += 3) {
+            codewords.push(...czQR._dm_triplet(values[i], values[i + 1], values[i + 2]));
+          }
+          if (last) head = codewords.length;
+          if (!last || terminate) codewords.push(254);
+        } else {
+          codewords.push(...czQR._dm_edifactQuads(values));
+          if (last) { head = codewords.length; edifact = true; }
+          if (!last || terminate) codewords.push(...czQR._dm_edifactQuads([31]));
+        }
+        index = end;
+      }
+      return { codewords, head, edifact };
+    };
+
+    const forms = [];
+    const ascii = build(0, true);
+    if (ascii) forms.push(ascii.codewords);
+    for (let mode = 0; mode < MIXED_MODES.length; mode++) {
+      const open = build(mixedState(mode, 0), false);
+      if (open) forms.push(open.codewords);
+    }
+    if (forms.length === 0) return czQR._dm_encodeASCII(text);
+    forms.sort((a, b) => a.length - b.length);
+    return forms[0];
+  }
+
+  // ── Find smallest symbol ──
+  static _dm_findSize(dataLen) {
+    for (const s of czQR._DM_SIZES) {
+      if (s[4] >= dataLen) return s;
+    }
+    return null;
+  }
+
+  // ── Pad data codewords ──
+  static _dm_pad(cw, capacity) {
+    if (cw.length < capacity) cw.push(129);
+    while (cw.length < capacity) {
+      const pos = cw.length + 1;
+      const pr = ((149 * pos) % 253) + 1;
+      let v = 129 + pr;
+      if (v > 254) v -= 254;
+      cw.push(v);
+    }
+  }
+
+  // ── Reed-Solomon EC (roots a^1..a^n per ISO 16022) ──
+  static _dm_rsEncode(data, ecCount) {
+    const exp = czQR._DM_EXP, log = czQR._DM_LOG;
+    const gen = new Array(ecCount + 1).fill(0);
+    gen[0] = 1;
+    for (let i = 1; i <= ecCount; i++) {
+      for (let j = gen.length - 1; j >= 1; j--)
+        gen[j] = gen[j - 1] ^ (gen[j] === 0 ? 0 : exp[(log[gen[j]] + i) % 255]);
+      gen[0] = gen[0] === 0 ? 0 : exp[(log[gen[0]] + i) % 255];
+    }
+    const rem = new Array(ecCount).fill(0);
+    for (const b of data) {
+      const lead = b ^ rem[0];
+      for (let j = 0; j < ecCount - 1; j++)
+        rem[j] = rem[j + 1] ^ (lead === 0 ? 0 : exp[(log[lead] + log[gen[ecCount - 1 - j]]) % 255]);
+      rem[ecCount - 1] = lead === 0 ? 0 : exp[(log[lead] + log[gen[0]]) % 255];
+    }
+    return rem;
+  }
+
+  // ── Interleaved EC ──
+  static _dm_addEC(dataCW, ecTotal, blocks) {
+    const ecPer = ecTotal / blocks;
+    const result = new Array(ecTotal).fill(0);
+    for (let b = 0; b < blocks; b++) {
+      const block = [];
+      for (let i = b; i < dataCW.length; i += blocks) block.push(dataCW[i]);
+      const ec = czQR._dm_rsEncode(block, ecPer);
+      for (let i = 0; i < ecPer; i++) result[i * blocks + b] = ec[i];
+    }
+    return [...dataCW, ...result];
+  }
+
+  // ── Placement map (ISO 16022 Annex M) ──
+  static _dm_buildPlacementMap(nrow, ncol) {
+    const total = nrow * ncol;
+    const placed = new Int32Array(total).fill(-1);
+    let bp = 0;
+
+    function setMod(r, c, bp, bit) {
+      if (r < 0) { r += nrow; c += 4 - ((nrow + 4) % 8); }
+      if (c < 0) { c += ncol; r += 4 - ((ncol + 4) % 8); }
+      if (r >= 0 && r < nrow && c >= 0 && c < ncol)
+        placed[r * ncol + c] = bp + bit;
+    }
+
+    function utah(r, c, bp) {
+      setMod(r-2,c-2,bp,0); setMod(r-2,c-1,bp,1);
+      setMod(r-1,c-2,bp,2); setMod(r-1,c-1,bp,3); setMod(r-1,c,bp,4);
+      setMod(r,c-2,bp,5);   setMod(r,c-1,bp,6);   setMod(r,c,bp,7);
+      return bp + 8;
+    }
+
+    function corner1(bp) {
+      setMod(nrow-1,0,bp,0); setMod(nrow-1,1,bp,1); setMod(nrow-1,2,bp,2);
+      setMod(0,ncol-2,bp,3); setMod(0,ncol-1,bp,4);
+      setMod(1,ncol-1,bp,5); setMod(2,ncol-1,bp,6); setMod(3,ncol-1,bp,7);
+      return bp + 8;
+    }
+    function corner2(bp) {
+      setMod(nrow-3,0,bp,0); setMod(nrow-2,0,bp,1); setMod(nrow-1,0,bp,2);
+      setMod(0,ncol-4,bp,3); setMod(0,ncol-3,bp,4); setMod(0,ncol-2,bp,5);
+      setMod(0,ncol-1,bp,6); setMod(1,ncol-1,bp,7);
+      return bp + 8;
+    }
+    function corner3(bp) {
+      setMod(nrow-3,0,bp,0); setMod(nrow-2,0,bp,1); setMod(nrow-1,0,bp,2);
+      setMod(0,ncol-2,bp,3); setMod(0,ncol-1,bp,4);
+      setMod(1,ncol-1,bp,5); setMod(2,ncol-1,bp,6); setMod(3,ncol-1,bp,7);
+      return bp + 8;
+    }
+    function corner4(bp) {
+      setMod(nrow-1,0,bp,0); setMod(nrow-1,ncol-1,bp,1);
+      setMod(0,ncol-3,bp,2); setMod(0,ncol-2,bp,3); setMod(0,ncol-1,bp,4);
+      setMod(1,ncol-3,bp,5); setMod(1,ncol-2,bp,6); setMod(1,ncol-1,bp,7);
+      return bp + 8;
+    }
+
+    let row = 4, col = 0;
+    while (row < nrow || col < ncol) {
+      if (row === nrow && col === 0) bp = corner1(bp);
+      if (row === nrow - 2 && col === 0 && ncol % 4 !== 0) bp = corner2(bp);
+      if (row === nrow - 2 && col === 0 && ncol % 8 === 4) bp = corner3(bp);
+      if (row === nrow + 4 && col === 2 && ncol % 8 === 0) bp = corner4(bp);
+      // Sweep up-right
+      while (row >= 0 && col < ncol) {
+        if (row < nrow && col >= 0 && placed[row * ncol + col] === -1)
+          bp = utah(row, col, bp);
+        row -= 2; col += 2;
+      }
+      row += 1; col += 3;
+      // Sweep down-left
+      while (row < nrow && col >= 0) {
+        if (row >= 0 && col < ncol && placed[row * ncol + col] === -1)
+          bp = utah(row, col, bp);
+        row += 2; col -= 2;
+      }
+      row += 3; col += 1;
+    }
+    // Fixed corner
+    if (placed[(nrow - 1) * ncol + (ncol - 1)] === -1) {
+      placed[(nrow - 1) * ncol + (ncol - 1)] = -2;
+      placed[(nrow - 2) * ncol + (ncol - 2)] = -2;
+    }
+    return placed;
+  }
+
+  /**
+   * Generate a Data Matrix ECC200 barcode.
+   * @param {string} data - Data to encode
+   * @param {Object} [options]
+   * @param {number} [options.size=300] - Output pixel size
+   * @param {string} [options.fg='#000000'] - Foreground color
+   * @param {string} [options.bg='#ffffff'] - Background color
+   * @param {number} [options.margin=1] - Quiet zone in modules
+   * @param {string} [options.output='svg'] - 'svg'|'canvas'|'png'|'datauri'
+   * @returns {string|HTMLCanvasElement}
+   */
+  static dataMatrix(data, options = {}) {
+    czQR._dm_initGF();
+    const text = String(data);
+    const enc = czQR._dm_optimizeEncoding(text);
+    const sym = czQR._dm_findSize(enc.length);
+    if (!sym) throw new Error(`Data too long for Data Matrix (${enc.length} codewords)`);
+
+    const [symR, symC, drR, drC, totalData, ecCW, blocks] = sym;
+    const vRegs = symR / (drR + 2);
+    const hRegs = symC / (drC + 2);
+    const mapR = drR * vRegs;
+    const mapC = drC * hRegs;
+
+    // Pad & add EC
+    czQR._dm_pad(enc, totalData);
+    const allCW = czQR._dm_addEC(enc, ecCW, blocks);
+
+    // Build placement map & fill mapping matrix
+    const pmap = czQR._dm_buildPlacementMap(mapR, mapC);
+    const mapping = Array.from({ length: mapR }, () => new Uint8Array(mapC));
+
+    for (let r = 0; r < mapR; r++) {
+      for (let c = 0; c < mapC; c++) {
+        const bi = pmap[r * mapC + c];
+        if (bi === -2) { mapping[r][c] = 1; continue; }
+        if (bi >= 0) {
+          const cwIdx = Math.floor(bi / 8);
+          const bitOff = bi % 8;
+          if (cwIdx < allCW.length)
+            mapping[r][c] = (allCW[cwIdx] >> (7 - bitOff)) & 1;
+        }
+      }
+    }
+
+    // Build final matrix with finder patterns
+    const matrix = Array.from({ length: symR }, () => new Uint8Array(symC));
+    for (let vr = 0; vr < vRegs; vr++) {
+      for (let hr = 0; hr < hRegs; hr++) {
+        const sr = vr * (drR + 2);
+        const sc = hr * (drC + 2);
+        // Clock track: top alternating, right alternating
+        for (let c = 0; c < drC + 2; c++) matrix[sr][sc + c] = (c % 2 === 0) ? 1 : 0;
+        for (let r = 0; r < drR + 2; r++) matrix[sr + r][sc + drC + 1] = (r % 2 !== 0) ? 1 : 0;
+        // L-shape finder: bottom solid, left solid (drawn after clock to override corners)
+        for (let c = 0; c < drC + 2; c++) matrix[sr + drR + 1][sc + c] = 1;
+        for (let r = 0; r < drR + 2; r++) matrix[sr + r][sc] = 1;
+        // Data modules
+        for (let dr = 0; dr < drR; dr++)
+          for (let dc = 0; dc < drC; dc++)
+            matrix[sr + 1 + dr][sc + 1 + dc] = mapping[vr * drR + dr][hr * drC + dc];
+      }
+    }
+
+    // Render
+    const size = options.size || 300;
+    const fg = options.fg || '#000000';
+    const bg = options.bg || '#ffffff';
+    const margin = options.margin != null ? options.margin : 1;
+    const output = (options.output || 'svg').toLowerCase();
+
+    if (output === 'svg') return czQR._dm_renderSVG(matrix, symR, symC, size, fg, bg, margin);
+    const canvas = czQR._dm_renderCanvas(matrix, symR, symC, size, fg, bg, margin);
+    if (output === 'canvas') return canvas;
+    if (output === 'png' || output === 'datauri') return canvas.toDataURL('image/png');
+    return canvas;
+  }
+
+  // ── SVG renderer ──
+  static _dm_renderSVG(matrix, rows, cols, size, fg, bg, margin) {
+    const sx = cols + margin * 2;
+    const sy = rows + margin * 2;
+    const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${sx} ${sy}" shape-rendering="crispEdges">`;
+    if (bg !== 'transparent') svg += `<rect width="${sx}" height="${sy}" fill="${esc(bg)}"/>`;
+    let d = '';
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (matrix[r][c]) d += `M${c + margin},${r + margin}h1v1h-1z`;
+      }
+    }
+    if (d) svg += `<path d="${d}" fill="${esc(fg)}"/>`;
+    svg += '</svg>';
+    return svg;
+  }
+
+  // ── Canvas renderer ──
+  static _dm_renderCanvas(matrix, rows, cols, size, fg, bg, margin) {
+    const sx = cols + margin * 2;
+    const sy = rows + margin * 2;
+    const ms = size / Math.max(sx, sy);
+    const canvas = document.createElement('canvas');
+    canvas.width = size; canvas.height = size;
+    const ctx = canvas.getContext('2d');
+    if (bg === 'transparent') ctx.clearRect(0, 0, size, size);
+    else { ctx.fillStyle = bg; ctx.fillRect(0, 0, size, size); }
+    ctx.fillStyle = fg;
+    for (let r = 0; r < rows; r++)
+      for (let c = 0; c < cols; c++)
+        if (matrix[r][c])
+          ctx.fillRect(Math.floor((c + margin) * ms), Math.floor((r + margin) * ms), Math.ceil(ms), Math.ceil(ms));
+    return canvas;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // datamatrix-decode.js — Data Matrix ECC200 Decoder
+  // ════════════════════════════════════════════════════════════════════════
+
+  static decodeDataMatrix(matrix) {
+    czQR._dm_initGF();
+    const rows = matrix.length;
+    if (rows === 0) return null;
+    const cols = matrix[0].length;
+    
+    let symSize = null;
+    for (const s of czQR._DM_SIZES) {
+      if (s[0] === rows && s[1] === cols) { symSize = s; break; }
+    }
+    if (!symSize) throw new Error(`Unknown Data Matrix size: ${rows}x${cols}`);
+
+    const [symR, symC, drR, drC, totalData, ecCW, blocks] = symSize;
+    const vRegs = symR / (drR + 2);
+    const hRegs = symC / (drC + 2);
+    const mapR = drR * vRegs;
+    const mapC = drC * hRegs;
+
+    const mapping = Array.from({ length: mapR }, () => new Uint8Array(mapC));
+    for (let vr = 0; vr < vRegs; vr++) {
+      for (let hr = 0; hr < hRegs; hr++) {
+        const sr = vr * (drR + 2);
+        const sc = hr * (drC + 2);
+        for (let dr = 0; dr < drR; dr++) {
+          for (let dc = 0; dc < drC; dc++) {
+            mapping[vr * drR + dr][hr * drC + dc] = matrix[sr + 1 + dr][sc + 1 + dc] ? 1 : 0;
+          }
+        }
+      }
+    }
+
+    const pmap = czQR._dm_buildPlacementMap(mapR, mapC);
+    const allCW = new Uint8Array(totalData + ecCW);
+    
+    for (let r = 0; r < mapR; r++) {
+      for (let c = 0; c < mapC; c++) {
+        const bi = pmap[r * mapC + c];
+        if (bi >= 0) {
+          const cwIdx = Math.floor(bi / 8);
+          const bitOff = bi % 8;
+          if (cwIdx < allCW.length) {
+            allCW[cwIdx] |= (mapping[r][c] << (7 - bitOff));
+          }
+        }
+      }
+    }
+
+    const dataCW = czQR._dm_rsDecodeInterleaved(allCW, totalData, ecCW, blocks);
+    if (!dataCW) return null;
+
+    // Strip padding: find actual data length
+    // Padding starts with 129, followed by randomized pad values
+    let dataLen = dataCW.length;
+    for (let p = 0; p < dataCW.length; p++) {
+      if (dataCW[p] === 129) {
+        // Verify remaining are all padding
+        let allPad = true;
+        for (let q = p + 1; q < dataCW.length; q++) {
+          const pos = q + 1;
+          const pr = ((149 * pos) % 253) + 1;
+          let expected = 129 + pr;
+          if (expected > 254) expected -= 254;
+          if (dataCW[q] !== expected) { allPad = false; break; }
+        }
+        if (allPad) { dataLen = p; break; }
+      }
+    }
+
+    const result = czQR._dm_decodePayload(dataCW.slice(0, dataLen));
+    return { data: result.text, modes: result.modes, symbol: symR + 'x' + symC };
+  }
+
+  static _dm_rsDecodeInterleaved(allCW, dataCWLen, ecCWLen, blocks) {
+    const data = new Uint8Array(dataCWLen);
+    const ecPerBlock = ecCWLen / blocks;
+    const dataPerBlock = dataCWLen / blocks;
+    
+    for (let b = 0; b < blocks; b++) {
+      const block = new Uint8Array(dataPerBlock + ecPerBlock);
+      let idx = 0;
+      for (let i = b; i < dataCWLen; i += blocks) block[idx++] = allCW[i];
+      for (let i = b; i < ecCWLen; i += blocks) block[idx++] = allCW[dataCWLen + i];
+      
+      const corrected = czQR._dm_rsDecodeBlock(block, ecPerBlock);
+      if (!corrected) return null;
+      
+      idx = 0;
+      for (let i = b; i < dataCWLen; i += blocks) data[i] = corrected[idx++];
+    }
+    return data;
+  }
+
+  static _dm_rsDecodeBlock(block, ecCount) {
+    const exp = czQR._DM_EXP, log = czQR._DM_LOG;
+    const add = (a, b) => a ^ b;
+    const mul = (a, b) => (a === 0 || b === 0) ? 0 : exp[(log[a] + log[b]) % 255];
+    const inv = (a) => exp[255 - log[a]];
+    
+    const syn = new Uint8Array(ecCount);
+    let hasError = false;
+    for (let i = 0; i < ecCount; i++) {
+      let s = 0;
+      const root = exp[i + 1];
+      for (let j = 0; j < block.length; j++) s = add(mul(s, root), block[j]);
+      syn[i] = s;
+      if (s !== 0) hasError = true;
+    }
+    
+    if (!hasError) return block.slice(0, block.length - ecCount);
+    
+    let C = new Uint8Array(ecCount + 1); C[0] = 1;
+    let B = new Uint8Array(ecCount + 1); B[0] = 1;
+    let L = 0, m = 1;
+    
+    for (let k = 0; k < ecCount; k++) {
+      let d = syn[k];
+      for (let i = 1; i <= L; i++) d = add(d, mul(C[i], syn[k - i]));
+      
+      if (d === 0) {
+        m++;
+      } else {
+        const T = new Uint8Array(ecCount + 1);
+        for (let i = 0; i <= ecCount; i++) T[i] = C[i];
+        for (let i = 0; i <= ecCount - m; i++) C[i + m] = add(C[i + m], mul(d, B[i]));
+        if (2 * L <= k) {
+          L = k + 1 - L;
+          for (let i = 0; i <= ecCount; i++) B[i] = mul(T[i], inv(d));
+          m = 1;
+        } else {
+          m++;
+        }
+      }
+    }
+    
+    const errPoly = C.slice(0, L + 1);
+    const errPos = [], errLoc = [];
+    
+    for (let i = 0; i < block.length; i++) {
+      let sum = 0;
+      const x = exp[(255 - (block.length - 1 - i) % 255) % 255];
+      let xPower = 1;
+      for (let j = 0; j <= L; j++) {
+        sum = add(sum, mul(errPoly[j], xPower));
+        xPower = mul(xPower, x);
+      }
+      if (sum === 0) {
+        errPos.push(i);
+        errLoc.push(exp[(block.length - 1 - i) % 255]);
+      }
+    }
+    
+    if (errPos.length !== L) return null;
+    
+    const omega = new Uint8Array(L);
+    for (let i = 0; i < L; i++) {
+      let s = 0;
+      for (let j = 0; j <= i; j++) s = add(s, mul(errPoly[j], syn[i - j]));
+      omega[i] = s;
+    }
+    
+    const corrected = new Uint8Array(block);
+    for (let i = 0; i < errPos.length; i++) {
+      const xInv = exp[255 - log[errLoc[i]]];
+      let num = 0, xPower = 1;
+      for (let j = 0; j < L; j++) {
+        num = add(num, mul(omega[j], xPower));
+        xPower = mul(xPower, xInv);
+      }
+      let den = 0;
+      for (let j = 1; j <= L; j += 2) {
+        let p = 1;
+        for (let k = 0; k < j - 1; k++) p = mul(p, xInv);
+        den = add(den, mul(errPoly[j], p));
+      }
+      const mag = mul(errLoc[i], mul(num, inv(den)));
+      corrected[errPos[i]] = add(corrected[errPos[i]], mag);
+    }
+    
+    return corrected.slice(0, block.length - ecCount);
+  }
+
+  static _dm_decodePayload(dataCW) {
+    let text = "";
+    let mode = 0;
+    let i = 0;
+    const modes = new Set(['ASCII']);
+    const MODE_NAMES = { 1: 'C40', 2: 'TEXT', 3: 'X12', 4: 'EDIFACT', 5: 'Base256' };
+    
+    const C2 = ["!","\"","#","$","%","&","'","(",")","*","+",",","-",".","/",":",";","<","=",">","?","@","[","\\","]","^","_"];
+    const C3 = ["`",..."abcdefghijklmnopqrstuvwxyz".split(""),"{","|","}","~","\x7F"];
+    const T3 = ["`",..."ABCDEFGHIJKLMNOPQRSTUVWXYZ".split(""),"{","|","}","~","\x7F"];
+    
+    while (i < dataCW.length) {
+      if (mode === 0) {
+        const cw = dataCW[i++];
+        if (cw >= 1 && cw <= 128) text += String.fromCharCode(cw - 1);
+        else if (cw === 129) break;
+        else if (cw >= 130 && cw <= 229) {
+          const val = cw - 130;
+          text += (val < 10 ? "0" : "") + val;
+        } else if (cw === 230) { mode = 1; modes.add('C40'); }
+        else if (cw === 231) { mode = 5; modes.add('Base256'); }
+        else if (cw === 235) { if (i < dataCW.length) text += String.fromCharCode(dataCW[i++] - 1 + 128); }
+        else if (cw === 238) { mode = 3; modes.add('X12'); }
+        else if (cw === 239) { mode = 2; modes.add('TEXT'); }
+        else if (cw === 240) { mode = 4; modes.add('EDIFACT'); }
+        else if (cw === 241) i++;
+      } else if (mode === 1 || mode === 2 || mode === 3) {
+        let shift = 0;
+        while (i < dataCW.length) {
+          if (dataCW[i] === 254 || i === dataCW.length - 1) {
+            if (dataCW[i] === 254) i++;
+            mode = 0;
+            break;
+          }
+          const val = (dataCW[i] * 256) + dataCW[i+1] - 1;
+          const vals = [(val / 1600) | 0, ((val / 40) | 0) % 40, val % 40];
+          i += 2;
+          
+          for (let j = 0; j < 3; j++) {
+            const v = vals[j];
+            if (mode === 1 || mode === 2) {
+              if (shift === 0) {
+                if (v <= 2) shift = v + 1;
+                else if (v === 3) text += " ";
+                else if (v <= 13) text += String.fromCharCode(v - 4 + 48);
+                else if (v <= 39) text += String.fromCharCode(v - 14 + (mode === 1 ? 65 : 97));
+              } else if (shift === 1) {
+                text += String.fromCharCode(v); shift = 0;
+              } else if (shift === 2) {
+                if (v < 27) text += C2[v];
+                shift = 0;
+              } else if (shift === 3) {
+                text += (mode === 1 ? C3 : T3)[v];
+                shift = 0;
+              }
+            } else if (mode === 3) {
+              if (v === 0) text += "\r";
+              else if (v === 1) text += "*";
+              else if (v === 2) text += ">";
+              else if (v === 3) text += " ";
+              else if (v <= 13) text += String.fromCharCode(v - 4 + 48);
+              else if (v <= 39) text += String.fromCharCode(v - 14 + 65);
+            }
+          }
+        }
+      } else if (mode === 4) {
+        while (i < dataCW.length) {
+          if (dataCW[i] === 254) { mode = 0; i++; break; }
+          let bits = 0;
+          let count = 0;
+          for (let k = 0; k < 3; k++) {
+            if (i < dataCW.length) {
+              bits = (bits << 8) | dataCW[i++];
+              count++;
+            } else {
+              bits <<= 8;
+            }
+          }
+          let chars = count === 3 ? 4 : (count === 2 ? 2 : 1);
+          for (let b = 0; b < chars; b++) {
+            let v = (bits >> (18 - b * 6)) & 0x3F;
+            if (v === 0x1F) { mode = 0; break; }
+            text += String.fromCharCode((v & 0x20) === 0 ? v + 64 : v);
+          }
+          if (mode === 0) break;
+        }
+      } else if (mode === 5) {
+        let len = dataCW[i++];
+        let pr = ((149 * i) % 255) + 1;
+        let uLen = len - pr;
+        if (uLen < 0) uLen += 256;
+        if (uLen === 0) uLen = dataCW.length - i;
+        else if (uLen > 249) {
+          pr = ((149 * (i + 1)) % 255) + 1;
+          let len2 = dataCW[i++] - pr;
+          if (len2 < 0) len2 += 256;
+          uLen = (uLen - 249) * 250 + len2;
+        }
+        for (let j = 0; j < uLen && i < dataCW.length; j++) {
+          pr = ((149 * (i + 1)) % 255) + 1;
+          let val = dataCW[i++] - pr;
+          if (val < 0) val += 256;
+          text += String.fromCharCode(val);
+        }
+        mode = 0;
+      }
+    }
+    return { text, modes: [...modes] };
+  }
+
+  static readDataMatrix(imageData) {
+    let bm;
+    try { bm = czQR._rd_binarize(imageData, 0); } catch(e) { return null; }
+    const { width: w, height: h, data } = bm;
+    if (w < 12 || h < 12) return null;
+
+    const get = (x, y) => (x >= 0 && x < w && y >= 0 && y < h) ? data[y * w + x] : 0;
+
+    // Collect all solid horizontal dark runs (candidates for bottom finder edge)
+    const candidates = [];
+    for (let y = 0; y < h; y++) {
+      let run = 0, sx = 0;
+      for (let x = 0; x < w; x++) {
+        if (data[y * w + x]) {
+          if (run === 0) sx = x;
+          run++;
+        } else {
+          if (run >= 8) candidates.push({ x1: sx, x2: x - 1, y, len: run });
+          run = 0;
+        }
+      }
+      if (run >= 8) candidates.push({ x1: sx, x2: w - 1, y, len: run });
+    }
+
+    // Sort by length descending — try longest runs first (more likely to be finder)
+    candidates.sort((a, b) => b.len - a.len);
+
+    // Try each candidate as the bottom edge of an L-finder
+    const tried = new Set();
+    for (const cand of candidates) {
+      // Deduplicate similar candidates
+      const key = Math.round(cand.x1 / 4) + ',' + Math.round(cand.y / 4);
+      if (tried.has(key)) continue;
+      tried.add(key);
+
+      const res = czQR._dm_tryExtract(bm, cand.x1, cand.x2, cand.y, get);
+      if (res) {
+        try {
+          const decoded = czQR.decodeDataMatrix(res.matrix);
+          if (decoded && decoded.data) return {
+            data: decoded.data, format: 'datamatrix', type: '2d',
+            modes: decoded.modes, symbol: decoded.symbol, bounds: res.bounds
+          };
+        } catch(e) {}
+      }
+      if (tried.size > 200) break; // limit search
+    }
+    return null;
+  }
+
+  static _dm_tryExtract(bm, bx1, bx2, by, get) {
+    const { width: w, height: h } = bm;
+
+    // Find bottom-left corner: trace left to find start of solid bottom edge
+    let blX = bx1, blY = by;
+    while (blX > 0 && get(blX - 1, blY)) blX--;
+
+    // Trace bottom solid edge to the right
+    let brX = blX, brY = blY;
+    while (brX < w - 1 && get(brX + 1, brY)) brX++;
+
+    const botLen = brX - blX + 1;
+    if (botLen < 8) return null;
+
+    // Trace left solid edge upward from bottom-left corner
+    let tlX = blX, tlY = blY;
+    while (tlY > 0 && get(tlX, tlY - 1)) tlY--;
+
+    const leftLen = blY - tlY + 1;
+    if (leftLen < 8) return null;
+
+    // Aspect ratio check: L edges should be roughly similar length
+    const ratio = botLen / leftLen;
+    if (ratio < 0.3 || ratio > 3.5) return null;
+
+    // Estimate top-right corner (parallelogram assumption)
+    const trX = tlX + (brX - blX);
+    const trY = tlY + (brY - blY);
+    if (trX < 0 || trX >= w || trY < 0 || trY >= h) return null;
+
+    // Count transitions on top edge (clock track: alternating dark/light)
+    let topTrans = 0;
+    {
+      const steps = Math.max(Math.abs(trX - tlX), Math.abs(trY - tlY));
+      if (steps < 4) return null;
+      let lastVal = -1;
+      for (let i = 0; i <= steps; i++) {
+        const x = Math.round(tlX + (trX - tlX) * i / steps);
+        const y = Math.round(tlY + (trY - tlY) * i / steps);
+        const v = get(x, y);
+        if (lastVal !== -1 && v !== lastVal) topTrans++;
+        lastVal = v;
+      }
+    }
+
+    // Count transitions on right edge (clock track)
+    let rightTrans = 0;
+    {
+      const steps = Math.max(Math.abs(trX - brX), Math.abs(trY - brY));
+      if (steps < 4) return null;
+      let lastVal = -1;
+      for (let i = 0; i <= steps; i++) {
+        const x = Math.round(brX + (trX - brX) * i / steps);
+        const y = Math.round(brY + (trY - brY) * i / steps);
+        const v = get(x, y);
+        if (lastVal !== -1 && v !== lastVal) rightTrans++;
+        lastVal = v;
+      }
+    }
+
+    // Module count = transitions + 1, rounded to even (DM sizes are always even)
+    let cols = 2 * Math.round((topTrans + 1) / 2);
+    let rows = 2 * Math.round((rightTrans + 1) / 2);
+    if (cols < 8 || rows < 8) return null;
+
+    // Find best matching standard DM size
+    let bestSize = null, bestDiff = 999;
+    for (const s of czQR._DM_SIZES) {
+      const diff = Math.abs(s[0] - rows) + Math.abs(s[1] - cols);
+      if (diff < bestDiff) { bestDiff = diff; bestSize = s; }
+    }
+    if (!bestSize || bestDiff > 6) return null;
+
+    const [finalRows, finalCols] = bestSize;
+
+    // Sample modules using bilinear interpolation of the 4 corners
+    const matrix = [];
+    for (let r = 0; r < finalRows; r++) {
+      const row = [];
+      const vFrac = (r + 0.5) / finalRows;
+      for (let c = 0; c < finalCols; c++) {
+        const uFrac = (c + 0.5) / finalCols;
+        // Bilinear mapping: top-left..top-right / bottom-left..bottom-right
+        const topX = tlX + (trX - tlX) * uFrac;
+        const topY = tlY + (trY - tlY) * uFrac;
+        const botX2 = blX + (brX - blX) * uFrac;
+        const botY2 = blY + (brY - blY) * uFrac;
+        const px = Math.round(topX + (botX2 - topX) * vFrac);
+        const py = Math.round(topY + (botY2 - topY) * vFrac);
+        row.push(get(px, py) ? 1 : 0);
+      }
+      matrix.push(row);
+    }
+
+    // Validate finder pattern: bottom row should be all dark, left col should be all dark
+    let badBot = 0, badLeft = 0;
+    for (let c = 0; c < finalCols; c++) if (!matrix[finalRows - 1][c]) badBot++;
+    for (let r = 0; r < finalRows; r++) if (!matrix[r][0]) badLeft++;
+    if (badBot > finalCols * 0.2 || badLeft > finalRows * 0.2) return null;
+
+    // Validate clock tracks: top row and right col should alternate
+    let topAlt = 0;
+    for (let c = 0; c < finalCols; c++) {
+      if (matrix[0][c] === ((c % 2 === 0) ? 1 : 0)) topAlt++;
+    }
+    let rightAlt = 0;
+    for (let r = 0; r < finalRows; r++) {
+      if (matrix[r][finalCols - 1] === ((r % 2 !== 0) ? 1 : 0)) rightAlt++;
+    }
+    if (topAlt < finalCols * 0.6 || rightAlt < finalRows * 0.6) return null;
+
+    // Compute tight bounds by scanning actual dark pixels near detected DM
+    const margin = Math.round(Math.max(botLen, leftLen) * 0.1);
+    const sx = Math.max(0, blX - margin);
+    const sy = Math.max(0, tlY - margin);
+    const ex = Math.min(bm.width - 1, brX + margin);
+    const ey = Math.min(bm.height - 1, blY + margin);
+    let bMinX = ex, bMinY = ey, bMaxX = sx, bMaxY = sy;
+    for (let py = sy; py <= ey; py++) {
+      for (let px = sx; px <= ex; px++) {
+        if (get(px, py)) {
+          if (px < bMinX) bMinX = px;
+          if (px > bMaxX) bMaxX = px;
+          if (py < bMinY) bMinY = py;
+          if (py > bMaxY) bMaxY = py;
+        }
+      }
+    }
+    const pad = Math.round(Math.min(leftLen / finalRows, botLen / finalCols) * 0.1);
+
+    return {
+      matrix,
+      bounds: {
+        x: Math.max(0, bMinX - pad),
+        y: Math.max(0, bMinY - pad),
+        w: bMaxX - bMinX + 1 + pad * 2,
+        h: bMaxY - bMinY + 1 + pad * 2
+      }
+    };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
   // barcode-decode.js — 1D barcode reading and decoding engine
   // ════════════════════════════════════════════════════════════════════════
 
@@ -3466,6 +4601,36 @@ class czQR {
       }
     }
 
+    // 2c: Data Matrix probe
+    try {
+      const dmRes = czQR.readDataMatrix(imgData);
+      if (dmRes && !earlyData.has(dmRes.data)) {
+        if (addResult(dmRes)) earlyData.add(dmRes.data);
+      }
+      // Try sub-regions for Data Matrix
+      const dmRegions = [
+        [0, 0, Math.floor(w/2), h], [Math.floor(w/2), 0, w - Math.floor(w/2), h],
+        [0, 0, w, Math.floor(h/2)], [0, Math.floor(h/2), w, h - Math.floor(h/2)]
+      ];
+      for (const [rx, ry, rw, rh] of dmRegions) {
+        if (rw < 50 || rh < 50) continue;
+        let sub = new ImageData(rw, rh);
+        for (let y = 0; y < rh; y++) {
+          const srcOff = ((ry + y) * w + rx) * 4;
+          const dstOff = y * rw * 4;
+          sub.data.set(imgData.data.subarray(srcOff, srcOff + rw * 4), dstOff);
+        }
+        const subRes = czQR.readDataMatrix(sub);
+        if (subRes && !earlyData.has(subRes.data)) {
+          if (subRes.bounds) {
+            subRes.bounds.x += rx;
+            subRes.bounds.y += ry;
+          }
+          if (addResult(subRes)) earlyData.add(subRes.data);
+        }
+      }
+    } catch (e) {}
+
     // ═══ Step 3: Deep QR scan (only if multiple QR finder groups) ═══
     if (needsDeepQR) {
       const regions = [
@@ -4113,7 +5278,9 @@ class czQR {
         }
 
         // Label
-        drawLabel((r.format || '').toUpperCase(), bx, by);
+        let labelText = (r.format || '').toUpperCase();
+        if (r.format === 'datamatrix') labelText = 'DATA MATRIX';
+        drawLabel(labelText, bx, by);
       }
     }
   }

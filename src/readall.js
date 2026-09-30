@@ -85,6 +85,36 @@
       }
     }
 
+    // 2c: Data Matrix probe
+    try {
+      const dmRes = czQR.readDataMatrix(imgData);
+      if (dmRes && !earlyData.has(dmRes.data)) {
+        if (addResult(dmRes)) earlyData.add(dmRes.data);
+      }
+      // Try sub-regions for Data Matrix
+      const dmRegions = [
+        [0, 0, Math.floor(w/2), h], [Math.floor(w/2), 0, w - Math.floor(w/2), h],
+        [0, 0, w, Math.floor(h/2)], [0, Math.floor(h/2), w, h - Math.floor(h/2)]
+      ];
+      for (const [rx, ry, rw, rh] of dmRegions) {
+        if (rw < 50 || rh < 50) continue;
+        let sub = new ImageData(rw, rh);
+        for (let y = 0; y < rh; y++) {
+          const srcOff = ((ry + y) * w + rx) * 4;
+          const dstOff = y * rw * 4;
+          sub.data.set(imgData.data.subarray(srcOff, srcOff + rw * 4), dstOff);
+        }
+        const subRes = czQR.readDataMatrix(sub);
+        if (subRes && !earlyData.has(subRes.data)) {
+          if (subRes.bounds) {
+            subRes.bounds.x += rx;
+            subRes.bounds.y += ry;
+          }
+          if (addResult(subRes)) earlyData.add(subRes.data);
+        }
+      }
+    } catch (e) {}
+
     // ═══ Step 3: Deep QR scan (only if multiple QR finder groups) ═══
     if (needsDeepQR) {
       const regions = [

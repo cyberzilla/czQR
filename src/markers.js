@@ -152,7 +152,9 @@
         }
 
         // Label
-        drawLabel((r.format || '').toUpperCase(), bx, by);
+        let labelText = (r.format || '').toUpperCase();
+        if (r.format === 'datamatrix') labelText = 'DATA MATRIX';
+        drawLabel(labelText, bx, by);
       }
     }
   }

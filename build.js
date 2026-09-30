@@ -20,6 +20,8 @@ const MODULES = [
   'qr-encode.js',       // QR code generation
   'qr-decode.js',       // QR code reading
   'barcode-encode.js',  // Barcode generation (placeholder)
+  'datamatrix-encode.js', // Data Matrix ECC200 generation
+  'datamatrix-decode.js', // Data Matrix ECC200 decoding
   'barcode-decode.js',  // Barcode reading (decoders)
   'readall.js',         // readAll() orchestrator + scanImageAll
   'markers.js',         // drawDetections() API

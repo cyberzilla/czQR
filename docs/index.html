@@ -801,9 +801,15 @@
         }
 
         .footer {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            z-index: 50;
             text-align: center;
-            margin-top: 48px;
-            padding-top: 24px;
+            padding: 12px 20px;
+            background: rgba(10, 10, 20, .85);
+            backdrop-filter: blur(12px);
             border-top: 1px solid var(--bdr);
             color: var(--t3);
             font-size: 13px
@@ -909,8 +915,9 @@
             <!-- ========== Settings ========== -->
             <div>
                 <div class="tabs anim">
-                    <button class="tab active" onclick="switchMode('qr')">QR Code</button>
-                    <button class="tab" onclick="switchMode('barcode')">Barcode</button>
+                    <button class="tab active" onclick="switchMode('qr');this.blur()">QR Code</button>
+                    <button class="tab" onclick="switchMode('datamatrix');this.blur()">Data Matrix</button>
+                    <button class="tab" onclick="switchMode('barcode');this.blur()">Barcode</button>
                 </div>
                 
                 <div class="card anim ad1 panel active" id="qrSettings">
@@ -1124,6 +1131,57 @@
                 </div>
             </div>
 
+            <!-- Data Matrix Settings -->
+            <div class="card anim ad1 panel" id="dmSettings">
+                <div class="ct">
+                    <div class="ico ico-p">◫</div> Data Matrix Settings
+                </div>
+
+                <div class="fg">
+                    <label class="fl">Content</label>
+                    <textarea class="ft" id="dmData" placeholder="Enter text, URL, or data…">https://github.com/cyberzilla/czQR</textarea>
+                </div>
+
+                <div class="r2">
+                    <div class="fg">
+                        <label class="fl">Output Size: <span id="dms_v">300</span>px</label>
+                        <div class="rw"><input type="range" class="rs" id="dmSize" min="100" max="800" value="300" step="10"><span class="rv" id="dms_b">300</span></div>
+                    </div>
+                    <div class="fg">
+                        <label class="fl">Quiet Zone: <span id="dmm_v">1</span></label>
+                        <div class="rw"><input type="range" class="rs" id="dmMargin" min="0" max="4" value="1" step="1"><span class="rv" id="dmm_b">1</span></div>
+                    </div>
+                </div>
+
+                <div class="r2">
+                    <div class="fg">
+                        <label class="fl">Foreground</label>
+                        <div class="ci">
+                            <input type="color" class="cs" id="dmFgSw" value="#000000">
+                            <input type="text" class="ch" id="dmFg" value="#000000" maxlength="7">
+                        </div>
+                    </div>
+                    <div class="fg">
+                        <label class="fl">Background</label>
+                        <div class="ci">
+                            <input type="color" class="cs" id="dmBgSw" value="#ffffff">
+                            <input type="text" class="ch" id="dmBg" value="#ffffff" maxlength="7">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="fg" style="margin-top:16px">
+                    <button class="btn btn-p" id="genDmBtn" onclick="generate()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <path d="M12 2L2 7l10 5 10-5-10-5z" />
+                            <path d="M2 17l10 5 10-5" />
+                            <path d="M2 12l10 5 10-5" />
+                        </svg>
+                        Generate Data Matrix
+                    </button>
+                </div>
+            </div>
+
             <!-- Barcode Settings -->
             <div class="card anim ad1 panel" id="bcSettings">
                 <div class="ct">
@@ -1201,7 +1259,7 @@
                                 <line x1="21" y1="14" x2="21" y2="21" />
                                 <line x1="14" y1="21" x2="21" y2="21" />
                             </svg>
-                            <p>Enter your content and click<br><strong>Generate QR Code</strong></p>
+                            <p>Enter your content and click<br><strong>Generate</strong></p>
                         </div>
                         <div class="qr-loading" id="qrLoading">
                             <div class="ld-spinner"></div>
@@ -1288,7 +1346,7 @@
         });
 
         // Color sync
-        [['fgSw', 'fg'], ['bgSw', 'bg'], ['fcSw', 'fontColor'], ['finderOuterSw', 'finderOuterColor'], ['finderInnerSw', 'finderInnerColor']].forEach(([sw, hex]) => {
+        [['fgSw', 'fg'], ['bgSw', 'bg'], ['fcSw', 'fontColor'], ['finderOuterSw', 'finderOuterColor'], ['finderInnerSw', 'finderInnerColor'], ['dmFgSw', 'dmFg'], ['dmBgSw', 'dmBg']].forEach(([sw, hex]) => {
             const s = $(sw), h = $(hex); if (!s || !h) return;
             s.addEventListener('input', () => h.value = s.value);
             h.addEventListener('input', () => { if (/^#[0-9a-fA-F]{6}$/.test(h.value)) s.value = h.value; });
@@ -1327,17 +1385,62 @@
         let lastQR = null;
         let lastBC = null;
         let currentMode = 'qr';
+        let _genToken = 0;
+        const _preview = { qr: null, datamatrix: null, barcode: null };
+
+        function _savePreview() {
+            // Convert canvas to img so innerHTML preserves pixel data
+            const canvas = $('qrResult').querySelector('canvas');
+            if (canvas) {
+                const img = document.createElement('img');
+                img.src = canvas.toDataURL('image/png');
+                img.style.cssText = canvas.style.cssText;
+                canvas.replaceWith(img);
+            }
+            _preview[currentMode] = {
+                html: $('qrResult').innerHTML,
+                dlGrid: $('dlGrid').style.display,
+                infoBar: $('infoBar').style.display,
+                infoHTML: $('infoBar').innerHTML,
+                checker: $('qrFrame').classList.contains('checker'),
+                placeholder: $('placeholder').style.display,
+                lastQR, lastBC
+            };
+        }
+        function _restorePreview(mode) {
+            const p = _preview[mode];
+            if (!p) {
+                $('qrResult').innerHTML = '';
+                $('dlGrid').style.display = 'none';
+                $('infoBar').style.display = 'none';
+                $('placeholder').style.display = '';
+                return;
+            }
+            $('qrResult').innerHTML = p.html;
+            $('dlGrid').style.display = p.dlGrid;
+            $('infoBar').style.display = p.infoBar;
+            $('infoBar').innerHTML = p.infoHTML;
+            $('qrFrame').classList.toggle('checker', p.checker);
+            $('placeholder').style.display = p.placeholder;
+            lastQR = p.lastQR;
+            lastBC = p.lastBC;
+        }
 
         const DEFAULT_URL = 'https://github.com/cyberzilla/czQR';
         const DEFAULT_LOGO = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAFAAAABQCAYAAACOEfKtAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAAAJcEhZcwAADsMAAA7DAcdvqGQAABJsSURBVHhe7d1jkGRJFwbgnrVt78badqxjbdu2bduYtW3btm3bZn7x5O7pqblV3V241fP9mBNxoqovM9/7HmXmre7o6OhYq6Ojo+9AbVo7Luro6EgDtWnNKBY3DtT6dSCALepAAFvU/28A+/Tpk4Yccsg04YQTpvHGGy+NPfbYaZRRRqk6bgDq/xeAE000UVpjjTXSIYccki677LL08ssvpw8++CD9+uuv6aeffko//PBD/vvmm29O5557btp4443TsMMOW3WdXtQBC+AQQwyRll122XT44YenJ554Iv3zzz+JxCf55Zdf8ueff/6Zgfz7778795F33303HXXUUWmEEUaoun4v6IABcLrppktHHHFEZlilPP300+mPP/5In3/+eQbx999/zwq8Svn555/TK6+80t+2Z555Ji2xxBJV92qz9i6Ac8wxR7rwwgszk0LeeeeddOaZZ6b33nsvA3fOOeekxx57LL3++uvp2GOPTa+++mo+7qWXXkrvv/9+Nt0nn3wyvfDCCxk0+5l1yF577VV13zZq7wDIvI488sgMXDDq7bffTp988klm3CWXXJK23XbbDOKNN96Yttlmm/TWW2+la6+9Nm211Vbp008/zWa6yCKLpFVWWSUtvvji+fxbbrklffnll/malXL55Zen4YcfvqodbdD2AzjzzDOnp556qrNz2BV/A+Gvv/7KIJ5yyilpoYUWStdcc03aaaedsjl+/fXXmbH77LNP+vDDD9Nmm22Wbr/99rTHHntkwD2A6667Lv322285yLhWyPPPP59mn332qvaUrO0FEAg6Rl588cX0+OOP5++fffZZOuusszqZ89VXX2UmnX322Wm11VbLvvDUU0/NrBN5zz///HTYYYfl/UC54oor0oorrpjN+bbbbsv7XZvZf/vtt51A/vjjj2nfffetaleJ2j4A55prrvTdd99lh0+Yr8CBMQLAYostls3aMRjGD5Ibbrgh+0EBRoQ+5phjMtBbbrllZumee+6ZGYqJUh7musEGG2TGPfDAA53+sJKNBx98cFX7StL2ADjiiCNmNoQwv4suuih/7r777jkICAibb755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';
 
         function switchMode(mode) {
+            if (mode === currentMode) return;
+            _savePreview();
             currentMode = mode;
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelectorAll('.tab')[mode === 'qr' ? 0 : 1].classList.add('active');
+            const tabs = document.querySelectorAll('.tab');
+            tabs.forEach(t => t.classList.remove('active'));
+            const idx = mode === 'qr' ? 0 : mode === 'datamatrix' ? 1 : 2;
+            tabs[idx].classList.add('active');
             document.getElementById('qrSettings').classList.toggle('active', mode === 'qr');
+            document.getElementById('dmSettings').classList.toggle('active', mode === 'datamatrix');
             document.getElementById('bcSettings').classList.toggle('active', mode === 'barcode');
-            generate();
+            _restorePreview(mode);
         }
 
         // Barcode Range sync
@@ -1346,9 +1449,16 @@
             el.addEventListener('input', () => { if ($(a)) $(a).textContent = el.value; if ($(b)) $(b).textContent = el.value; });
         });
 
-        async function generate() {
-            if (currentMode === 'barcode') return generateBarcode();
+        // Data Matrix Range sync
+        [['dmSize', 'dms_v', 'dms_b'], ['dmMargin', 'dmm_v', 'dmm_b']].forEach(([id, a, b]) => {
+            const el = $(id); if (!el) return;
+            el.addEventListener('input', () => { if ($(a)) $(a).textContent = el.value; if ($(b)) $(b).textContent = el.value; });
+        });
 
+        async function generate() {
+            const myToken = ++_genToken;
+            if (currentMode === 'barcode') return generateBarcode(myToken);
+            if (currentMode === 'datamatrix') return generateDataMatrix(myToken);
             const text = v('text').trim();
             if (!text) { toast('Please enter content', true); return; }
 
@@ -1358,7 +1468,6 @@
 
             $('placeholder').style.display = 'none';
             $('errMsg').style.display = 'none';
-            $('qrResult').innerHTML = '';
 
             // Show loading overlay on preview (min 500ms to avoid flicker)
             const loader = $('qrLoading');
@@ -1370,6 +1479,7 @@
             await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
             try {
+                if (myToken !== _genToken) return;
                 const ec = v('ec');
                 const format = v('format');
                 const size = parseInt(v('size'));
@@ -1422,10 +1532,12 @@
 
                 // Render (async for logo support)
                 const result = $('qrResult');
+                result.innerHTML = '';
                 if (format === 'svg') {
                     result.innerHTML = qr.render('svg');
                 } else {
                     const canvas = await qr.renderAsync('canvas');
+                    if (myToken !== _genToken) return;
                     canvas.style.maxWidth = '100%';
                     canvas.style.height = 'auto';
                     result.appendChild(canvas);
@@ -1466,7 +1578,7 @@
             }
         }
 
-        async function generateBarcode() {
+        async function generateBarcode(myToken) {
             const data = v('bcData').trim();
             if (!data) { toast('Please enter barcode data', true); return; }
             
@@ -1486,6 +1598,7 @@
             await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
             try {
+                if (myToken !== _genToken) return;
                 const format = v('bcFormat');
                 const options = {
                     moduleWidth: parseInt(v('bcWidth')),
@@ -1518,17 +1631,93 @@
             }
         }
 
+        async function generateDataMatrix(myToken) {
+            const data = v('dmData').trim();
+            if (!data) { toast('Please enter content', true); return; }
+
+            const btn = $('genDmBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spin" style="display:inline-block;width:18px;height:18px;border-width:2px"></div> Generating…';
+
+            $('placeholder').style.display = 'none';
+            $('errMsg').style.display = 'none';
+
+            const loader = $('qrLoading');
+            loader.querySelector('.ld-text').textContent = 'Generating…';
+            loader.classList.add('active');
+            const _loadStart = Date.now();
+
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+            try {
+                if (myToken !== _genToken) return;
+                const size = parseInt(v('dmSize'));
+                const margin = parseInt(v('dmMargin'));
+                const fg = v('dmFg');
+                const bg = v('dmBg');
+
+                const svg = czQR.dataMatrix(data, { size, fg, bg, margin, output: 'svg' });
+                lastQR = { format: 'svg', matrix: null };
+                lastBC = { svg, format: 'svg', ext: 'svg' };
+
+                const result = $('qrResult');
+                result.innerHTML = svg;
+                $('qrFrame').classList.remove('checker');
+                $('dlGrid').style.display = 'grid';
+                $('infoBar').style.display = 'none';
+
+                toast('Data Matrix generated instantly! ⚡');
+            } catch (e) {
+                $('errMsg').style.display = 'block';
+                $('errMsg').textContent = e.message;
+                toast(e.message, true);
+            } finally {
+                const elapsed = Date.now() - _loadStart;
+                const remaining = Math.max(0, 500 - elapsed);
+                await new Promise(r => setTimeout(r, remaining));
+                loader.classList.remove('active');
+                btn.disabled = false;
+                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> Generate Data Matrix';
+            }
+        }
+
         async function downloadAs(fmt) {
-            if (currentMode === 'barcode') {
+            if (currentMode === 'barcode' || currentMode === 'datamatrix') {
                 if(!lastBC) return;
-                const blob = new Blob([lastBC.svg], {type: 'image/svg+xml'});
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `barcode.svg`;
-                a.click();
-                URL.revokeObjectURL(url);
-                toast(`Downloaded as SVG`);
+                const name = currentMode === 'datamatrix' ? 'datamatrix' : 'barcode';
+                if (fmt === 'svg') {
+                    const blob = new Blob([lastBC.svg], {type: 'image/svg+xml'});
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url; a.download = name + '.svg'; a.click();
+                    URL.revokeObjectURL(url);
+                    toast('Downloaded as SVG');
+                } else {
+                    // Render SVG to canvas, export as PNG/WebP
+                    const img = new Image();
+                    const svgBlob = new Blob([lastBC.svg], {type: 'image/svg+xml'});
+                    const url = URL.createObjectURL(svgBlob);
+                    img.onload = () => {
+                        const s = Math.max(img.width, img.height, 800);
+                        const cvs = document.createElement('canvas');
+                        cvs.width = s; cvs.height = s;
+                        const ctx = cvs.getContext('2d');
+                        ctx.fillStyle = '#ffffff';
+                        ctx.fillRect(0, 0, s, s);
+                        ctx.drawImage(img, (s - img.width) / 2, (s - img.height) / 2, img.width, img.height);
+                        URL.revokeObjectURL(url);
+                        const ext = fmt === 'webp' ? 'webp' : 'png';
+                        const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
+                        cvs.toBlob(blob => {
+                            const u2 = URL.createObjectURL(blob);
+                            const a = document.createElement('a');
+                            a.href = u2; a.download = name + '.' + ext; a.click();
+                            URL.revokeObjectURL(u2);
+                            toast('Downloaded as ' + ext.toUpperCase());
+                        }, mime);
+                    };
+                    img.src = url;
+                }
                 return;
             }
             if (!lastQR) return;
@@ -1575,8 +1764,8 @@
             }
         });
 
-        // Auto-generate on load
-        setTimeout(generate, 300);
+        // Auto-generate on load, then save to cache
+        setTimeout(() => generate().then(() => _savePreview()), 300);
     </script>
 </body>
 
