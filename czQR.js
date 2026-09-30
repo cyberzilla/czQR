@@ -3735,7 +3735,6 @@ class czQR {
       for (const f of foundAt) {
         if (f.data !== r.data) continue;
         if (f.bounds && bounds) {
-          // 2D bounds overlap: both X AND Y must overlap
           const xOverlap = Math.max(0, Math.min(f.bounds.x + f.bounds.w, bounds.x + bounds.w) - Math.max(f.bounds.x, bounds.x));
           const yOverlap = Math.max(0, Math.min(f.bounds.y + f.bounds.h, bounds.y + bounds.h) - Math.max(f.bounds.y, bounds.y));
           const minW = Math.min(f.bounds.w, bounds.w);
