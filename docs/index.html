@@ -1685,6 +1685,9 @@
 
                 toast('Data Matrix generated instantly! ⚡');
             } catch (e) {
+                $('qrResult').innerHTML = '';
+                $('dlGrid').style.display = 'none';
+                $('placeholder').style.display = 'flex';
                 toast(e.message, true);
             } finally {
                 const elapsed = Date.now() - _loadStart;
