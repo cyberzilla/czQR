@@ -350,12 +350,22 @@
     const addIfValid = (r, yFrac, bounds) => {
       if (!r) return;
       if (r.format === czQR.BC_ITF && !r.checksumValid) return;
-      for (const f of foundAt) {
-        if (f.data === r.data && Math.abs(f.y - yFrac) < DEDUP_DIST) return;
-      }
       if (bounds) r.bounds = bounds;
+      for (const f of foundAt) {
+        if (f.data !== r.data) continue;
+        if (f.bounds && bounds) {
+          // 2D bounds overlap: both X AND Y must overlap
+          const xOverlap = Math.max(0, Math.min(f.bounds.x + f.bounds.w, bounds.x + bounds.w) - Math.max(f.bounds.x, bounds.x));
+          const yOverlap = Math.max(0, Math.min(f.bounds.y + f.bounds.h, bounds.y + bounds.h) - Math.max(f.bounds.y, bounds.y));
+          const minW = Math.min(f.bounds.w, bounds.w);
+          const minH = Math.min(f.bounds.h, bounds.h);
+          if (minW > 0 && minH > 0 && xOverlap > minW * 0.5 && yOverlap > 0) return;
+        } else {
+          if (Math.abs(f.y - yFrac) < DEDUP_DIST) return;
+        }
+      }
       results.push(r);
-      foundAt.push({ data: r.data, y: yFrac });
+      foundAt.push({ data: r.data, y: yFrac, bounds });
     };
 
     const decodeLine = (scanY, x1, x2, yFrac, bounds) => {
@@ -367,28 +377,80 @@
         segLuma[x] = (data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) / 1000;
       }
 
-      // Tight bounds from binRow
-      const computeBounds = (binRow) => {
-        let fb2 = -1, lb2 = -1;
-        for (let i = 0; i < w; i++) { if (binRow[i]) { fb2 = i; break; } }
-        for (let i = w - 1; i >= 0; i--) { if (binRow[i]) { lb2 = i; break; } }
-        if (fb2 < 0 || lb2 <= fb2) return bounds || { x: x1, y: Math.max(0, scanY - 20), w: w, h: 40 };
-        const barW = lb2 - fb2;
-        const margin = Math.max(6, Math.floor(barW * 0.06));
-        const bx = x1 + Math.max(0, fb2 - margin);
-        const bw = Math.min(width - bx, barW + margin * 2);
-        const bh = Math.max(30, Math.floor(bw * 0.35));
-        return { x: bx, y: Math.max(0, scanY - Math.floor(bh / 2)), w: bw, h: bh };
+      // Find precise barcode bounds by scanning vertically from decode position
+      const findBounds = (leftPx, rightPx) => {
+        const bx1 = x1 + leftPx;
+        const bx2 = x1 + rightPx;
+        const bw = bx2 - bx1;
+        // Sample 10 points across barcode width
+        const samples = [];
+        for (let i = 0; i < 10; i++) samples.push(Math.floor(bx1 + bw * (i + 0.5) / 10));
+
+        const hasBarLine = (y) => {
+          if (y < 0 || y >= height) return false;
+          let dark = 0;
+          for (const cx of samples) {
+            if (cx >= 0 && cx < width) {
+              const i = (y * width + cx) * 4;
+              const luma = (data[i] * 299 + data[i+1] * 587 + data[i+2] * 114) / 1000;
+              if (luma < 128) dark++;
+            }
+          }
+          return dark >= 2; // at least 20% of samples are dark bars
+        };
+
+        // Scan UP to find top edge (stop after 3 consecutive non-bar lines)
+        let topY = scanY;
+        let gapUp = 0;
+        for (let y = scanY - 1; y >= Math.max(0, scanY - 200); y--) {
+          if (!hasBarLine(y)) {
+            gapUp++;
+            if (gapUp >= 3) { topY = y + gapUp; break; }
+          } else {
+            gapUp = 0;
+            topY = y;
+          }
+        }
+
+        // Scan DOWN to find bottom edge (stop after 3 consecutive non-bar lines)
+        let botY = scanY;
+        let gapDown = 0;
+        for (let y = scanY + 1; y < Math.min(height, scanY + 200); y++) {
+          if (!hasBarLine(y)) {
+            gapDown++;
+            if (gapDown >= 3) { botY = y - gapDown; break; }
+          } else {
+            gapDown = 0;
+            botY = y;
+          }
+        }
+
+        const margin = Math.max(4, Math.floor(bw * 0.03));
+        return {
+          x: Math.max(0, bx1 - margin),
+          y: Math.max(0, topY - margin),
+          w: Math.min(width - Math.max(0, bx1 - margin), bw + margin * 2),
+          h: (botY - topY) + margin * 2
+        };
       };
 
       const tryDecode = (binRow) => {
         const runs = czQR._bc_runLengthEncode(binRow);
         if (!runs || runs.length < 10) return;
-        const mb = () => computeBounds(binRow);
+        const lw = runs._leadingWhite || 0;
         const r1 = czQR._bc_decodeScanline(runs, formats);
-        if (r1) addIfValid(r1, yFrac, mb());
-        const r2 = czQR._bc_decodeScanline([...runs].reverse(), formats);
-        if (r2) addIfValid(r2, yFrac, mb());
+        if (r1) {
+          const b = (typeof r1.startPx === 'number') ? findBounds(lw + r1.startPx, lw + r1.endPx) : findBounds(0, w);
+          addIfValid(r1, yFrac, b);
+        }
+        const revRuns = [...runs].reverse();
+        revRuns._leadingWhite = 0;
+        const r2 = czQR._bc_decodeScanline(revRuns, formats);
+        if (r2) {
+          const totalPx = runs.reduce((s, r) => s + r.len, 0);
+          const b = (typeof r2.startPx === 'number') ? findBounds(totalPx - r2.endPx, totalPx - r2.startPx) : findBounds(0, w);
+          addIfValid(r2, yFrac, b);
+        }
       };
 
       // Method 1: Adaptive threshold binarization

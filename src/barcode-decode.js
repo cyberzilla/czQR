@@ -140,9 +140,11 @@
     runs.push({ v: currentBit, len: runLen });
     
     // Trim leading/trailing white space runs
-    if (runs.length > 0 && runs[0].v === 0) runs.shift();
+    let leadingWhite = 0;
+    if (runs.length > 0 && runs[0].v === 0) { leadingWhite = runs[0].len; runs.shift(); }
     if (runs.length > 0 && runs[runs.length - 1].v === 0) runs.pop();
     
+    runs._leadingWhite = leadingWhite;
     return runs;
   }
 
@@ -168,25 +170,26 @@
   }
 
   static _bc_decodeScanline(runs, formats) {
-    if (formats.includes(czQR.BC_EAN13) || formats.includes(czQR.BC_UPCA)) {
-      const ean13 = czQR._bc_decodeEAN13(runs);
-      if (ean13) return ean13;
-    }
-    if (formats.includes(czQR.BC_EAN8)) {
-      const ean8 = czQR._bc_decodeEAN8(runs);
-      if (ean8) return ean8;
-    }
-    if (formats.includes(czQR.BC_CODE128)) {
-      const c128 = czQR._bc_decodeCode128(runs);
-      if (c128) return c128;
-    }
-    if (formats.includes(czQR.BC_CODE39)) {
-      const c39 = czQR._bc_decodeCode39(runs);
-      if (c39) return c39;
-    }
-    if (formats.includes(czQR.BC_ITF)) {
-      const itf = czQR._bc_decodeITF(runs);
-      if (itf) return itf;
+    const decoders = [];
+    if (formats.includes(czQR.BC_EAN13) || formats.includes(czQR.BC_UPCA)) decoders.push(czQR._bc_decodeEAN13);
+    if (formats.includes(czQR.BC_EAN8)) decoders.push(czQR._bc_decodeEAN8);
+    if (formats.includes(czQR.BC_CODE128)) decoders.push(czQR._bc_decodeCode128);
+    if (formats.includes(czQR.BC_CODE39)) decoders.push(czQR._bc_decodeCode39);
+    if (formats.includes(czQR.BC_ITF)) decoders.push(czQR._bc_decodeITF);
+    for (const dec of decoders) {
+      const r = dec(runs);
+      if (r) {
+        // Compute pixel positions from run indices
+        if (typeof r.startRun === 'number' && typeof r.endRun === 'number') {
+          let px = 0;
+          for (let i = 0; i < Math.min(r.endRun + 1, runs.length); i++) {
+            if (i === r.startRun) r.startPx = px;
+            px += runs[i].len;
+            if (i === r.endRun) r.endPx = px;
+          }
+        }
+        return r;
+      }
     }
     return null;
   }
@@ -245,10 +248,11 @@
       let digits = [firstDigit, ...leftDigits, ...rightDigits];
       if (czQR._bc_checkEANChecksum(digits)) {
         const data = digits.join('');
+        const endRun = startIdx + 58;
         if (data.startsWith('0')) {
-          return { data: data.substring(1), format: czQR.BC_UPCA, type: '1d', checksumValid: true };
+          return { data: data.substring(1), format: czQR.BC_UPCA, type: '1d', checksumValid: true, startRun: startIdx, endRun };
         }
-        return { data: data, format: czQR.BC_EAN13, type: '1d', checksumValid: true };
+        return { data: data, format: czQR.BC_EAN13, type: '1d', checksumValid: true, startRun: startIdx, endRun };
       }
     }
     return null;
@@ -293,7 +297,7 @@
       
       let digits = [...leftDigits, ...rightDigits];
       if (czQR._bc_checkEANChecksum(digits)) {
-        return { data: digits.join(''), format: czQR.BC_EAN8, type: '1d', checksumValid: true };
+        return { data: digits.join(''), format: czQR.BC_EAN8, type: '1d', checksumValid: true, startRun: startIdx, endRun: startIdx + 42 };
       }
     }
     return null;
@@ -467,7 +471,9 @@
         data: isGS1 ? data.substring(6) : data, 
         format: isGS1 ? czQR.BC_GS1_128 : czQR.BC_CODE128, 
         type: '1d', 
-        checksumValid: true 
+        checksumValid: true,
+        startRun: startIdx,
+        endRun: idx + 6
       };
     }
     return null;
@@ -482,6 +488,7 @@
       // Try to decode starting from this position
       let idx = startIdx;
       let chars = [];
+      let lastCharEnd = startIdx;
       
       while (idx + 8 < runs.length) {
         if (runs[idx].v !== 1) { idx++; continue; }
@@ -491,8 +498,6 @@
         
         // Determine threshold between narrow and wide
         let sorted = [...charRuns].sort((a, b) => a - b);
-        // In Code-39, 3 elements are wide and 6 are narrow
-        // Threshold is between the 6th and 7th elements
         let threshold = (sorted[5] + sorted[6]) / 2;
         
         // Build 9-bit pattern
@@ -504,9 +509,12 @@
         const ch = czQR._C39_PATTERNS[pattern];
         if (ch) {
           chars.push(ch);
-          idx += 9; // Skip 9 elements of the character
+          const charEndRun = idx + 8; // last run of this character
+          idx += 9;
           // Skip the inter-character gap (1 narrow space)
           if (idx < runs.length && runs[idx].v === 0) idx++;
+          // Track end of last decoded character
+          lastCharEnd = charEndRun;
         } else {
           break;
         }
@@ -515,9 +523,8 @@
       // Need at least * + 1 char + * 
       if (chars.length >= 3 && chars[0] === '*' && chars[chars.length - 1] === '*') {
         const data = chars.slice(1, -1).join('');
-        // Reject if data contains '*' — indicates false merge of adjacent Code-39 barcodes
         if (data.length > 0 && !data.includes('*')) {
-          return { data: data, format: czQR.BC_CODE39, type: '1d', checksumValid: true };
+          return { data: data, format: czQR.BC_CODE39, type: '1d', checksumValid: true, startRun: startIdx, endRun: lastCharEnd };
         }
       }
     }
@@ -535,7 +542,7 @@
       if (startIdx > 0) {
         const prevRun = runs[startIdx - 1];
         const startNarrow = (runs[startIdx].len + runs[startIdx+1].len + runs[startIdx+2].len + runs[startIdx+3].len) / 4;
-        if (prevRun.v !== 0 || prevRun.len < startNarrow * 3) continue; // insufficient quiet zone
+        if (prevRun.v !== 0 || prevRun.len < startNarrow * 3) continue;
       }
       
       const startRuns = [runs[startIdx].len, runs[startIdx+1].len, runs[startIdx+2].len, runs[startIdx+3].len];
@@ -552,7 +559,7 @@
         const decodePair = (widths) => {
           let sorted = [...widths].sort((a,b)=>a-b);
           let threshold = (sorted[2] + sorted[3]) / 2;
-          // Require clear wide/narrow distinction — ratio must be at least 1.8:1
+          // Require clear wide/narrow distinction
           if (sorted[3] < sorted[1] * 1.8) return -1;
           let w = widths.map(x => x > threshold ? 'W' : 'n');
           for (let i = 0; i < 10; i++) {
@@ -584,10 +591,8 @@
             sum += digs[i] * ((digs.length - 1 - i) % 2 === 0 ? 1 : 3);
           }
           const checkValid = (10 - (sum % 10)) % 10 === digs[digs.length - 1];
-          // Only return if checksum is valid — reject false positives
-          if (checkValid) {
-            return { data: digits, format: czQR.BC_ITF, type: '1d', checksumValid: true };
-          }
+          // Accept with or without valid checksum (generic ITF doesn't require check digit)
+          return { data: digits, format: czQR.BC_ITF, type: '1d', checksumValid: checkValid, startRun: startIdx, endRun: idx + 2 };
         }
       }
     }

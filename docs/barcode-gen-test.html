@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>czQR vs JsBarcode Comparison</title>
+<style>
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0f172a; color:#e2e8f0; font-family:system-ui,-apple-system,sans-serif; padding:20px; }
+  h1 { text-align:center; margin-bottom:20px; color:#38bdf8; font-size:1.5rem; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(340px,1fr)); gap:16px; }
+  .card { background:#1e293b; border-radius:12px; padding:16px; border:1px solid #334155; }
+  .card h3 { color:#10b981; font-size:0.9rem; margin-bottom:8px; }
+  .compare { display:flex; flex-direction:column; gap:4px; }
+  .compare .label { font-size:0.65rem; color:#94a3b8; margin-bottom:2px; font-weight:600; text-transform:uppercase; letter-spacing:0.5px; }
+  .compare .label.czqr { color:#10b981; }
+  .compare .label.jsb { color:#f59e0b; }
+  .barcode { background:#fff; border-radius:6px; padding:8px; text-align:center; display:flex; align-items:center; justify-content:center; overflow-x:auto; }
+  .barcode svg { display:block; flex-shrink:0; }
+  .card .info { margin-top:8px; font-size:0.8rem; color:#94a3b8; }
+  .card .info code { color:#38bdf8; }
+  .card.error { border-color:#ef4444; }
+  .status { text-align:center; margin:16px 0; font-size:0.9rem; }
+  .status .ok { color:#10b981; } .status .fail { color:#ef4444; }
+  #custom { margin-top:20px; background:#1e293b; border-radius:12px; padding:20px; border:1px solid #334155; }
+  #custom h2 { color:#38bdf8; font-size:1.1rem; margin-bottom:12px; }
+  #custom select, #custom input, #custom button { padding:8px 12px; border-radius:6px; border:1px solid #475569; background:#0f172a; color:#e2e8f0; font-size:0.9rem; }
+  #custom button { background:#10b981; border:none; color:#000; cursor:pointer; font-weight:bold; }
+  #custom .row { display:flex; gap:8px; flex-wrap:wrap; align-items:center; margin-bottom:12px; }
+  #customOut { margin-top:12px; }
+  #customOut .compare .barcode { min-height:100px; }
+</style>
+</head>
+<body>
+<h1>🏷️ czQR vs JsBarcode — Comparison</h1>
+
+<div class="status" id="status"></div>
+<div class="grid" id="grid"></div>
+
+<div id="custom">
+  <h2>Custom Generator</h2>
+  <div class="row">
+    <select id="fmt">
+      <option value="ean13">EAN-13</option>
+      <option value="ean8">EAN-8</option>
+      <option value="upca">UPC-A</option>
+      <option value="code128" selected>Code 128</option>
+      <option value="code39">Code 39</option>
+      <option value="itf">ITF</option>
+    </select>
+    <input id="val" type="text" value="Hello World!" placeholder="Data..." style="flex:1;min-width:200px">
+    <button onclick="genCustom()">Generate</button>
+  </div>
+  <div id="customOut"></div>
+</div>
+
+<script src="czQR.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsbarcode@3.11.6/dist/JsBarcode.all.min.js"></script>
+<script>
+// Map czQR format → JsBarcode format
+const fmtMap = {
+  'ean13': 'EAN13', 'ean8': 'EAN8', 'upca': 'UPC',
+  'code128': 'CODE128', 'code39': 'CODE39', 'itf': 'ITF14'
+};
+
+function renderJsBarcode(format, data) {
+  const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  try {
+    JsBarcode(svgEl, data, {
+      format: fmtMap[format] || format,
+      width: 2, height: 70, fontSize: 14,
+      margin: 10, displayValue: true
+    });
+    return svgEl.outerHTML;
+  } catch(e) {
+    return `<span style="color:#ef4444;font-size:0.8rem">${e.message}</span>`;
+  }
+}
+
+const tests = [
+  { format: 'ean13', data: '5901234123457', label: 'EAN-13' },
+  { format: 'ean13', data: '978817525766', label: 'EAN-13 (auto check)' },
+  { format: 'ean8',  data: '55123457', label: 'EAN-8' },
+  { format: 'ean8',  data: '9638507', label: 'EAN-8 (auto check)' },
+  { format: 'upca',  data: '036000291452', label: 'UPC-A' },
+  { format: 'code128', data: 'Hello World!', label: 'Code 128 (Text)' },
+  { format: 'code128', data: 'ABC-12345', label: 'Code 128 (Alpha)' },
+  { format: 'code128', data: '1234567890', label: 'Code 128 (Numeric)' },
+  { format: 'code39', data: 'HELLO', label: 'Code 39' },
+  { format: 'code39', data: 'ABC-1234', label: 'Code 39 (Mixed)' },
+  { format: 'itf', data: '0001234567890', label: 'ITF-14 (auto check)' },
+  { format: 'itf', data: '00012345678905', label: 'ITF-14' },
+];
+
+let ok = 0, fail = 0;
+const grid = document.getElementById('grid');
+
+for (const t of tests) {
+  const card = document.createElement('div');
+  card.className = 'card';
+
+  let czqrHtml, jsbHtml;
+  try {
+    czqrHtml = czQR.barcode(t.format, t.data, { height: 90, output: 'svg' });
+    ok++;
+  } catch(e) {
+    czqrHtml = `<span style="color:#ef4444;font-size:0.8rem">✗ ${e.message}</span>`;
+    fail++;
+  }
+
+  // JsBarcode needs full check digit for auto-check tests
+  let jsbData = t.data;
+  if (t.format === 'ean13' && t.data.length === 12) {
+    // Let czQR compute check digit for JsBarcode too
+    try { jsbData = czQR.barcode(t.format, t.data, { output: 'svg' }).match(/>\d{13}</)?.[0]?.slice(1) || t.data; } catch(e) {}
+  }
+  if (t.format === 'ean8' && t.data.length === 7) {
+    try { jsbData = czQR.barcode(t.format, t.data, { output: 'svg' }).match(/>\d{8}</)?.[0]?.slice(1) || t.data; } catch(e) {}
+  }
+  jsbHtml = renderJsBarcode(t.format, jsbData);
+
+  card.innerHTML = `
+    <h3>${t.label} — <code>${t.data}</code></h3>
+    <div class="compare">
+      <div>
+        <div class="label czqr">czQR</div>
+        <div class="barcode">${czqrHtml}</div>
+      </div>
+      <div>
+        <div class="label jsb">JsBarcode</div>
+        <div class="barcode">${jsbHtml}</div>
+      </div>
+    </div>`;
+  grid.appendChild(card);
+}
+
+document.getElementById('status').innerHTML =
+  `<span class="ok">✓ ${ok} passed</span>` + (fail ? ` | <span class="fail">✗ ${fail} failed</span>` : '') +
+  ` — Total: ${tests.length} tests`;
+
+function genCustom() {
+  const fmt = document.getElementById('fmt').value;
+  const val = document.getElementById('val').value;
+  const out = document.getElementById('customOut');
+  let czqrHtml, jsbHtml;
+  try {
+    czqrHtml = czQR.barcode(fmt, val, { height: 100, output: 'svg' });
+  } catch(e) {
+    czqrHtml = `<span style="color:#ef4444">${e.message}</span>`;
+  }
+  jsbHtml = renderJsBarcode(fmt, val);
+  out.innerHTML = `
+    <div class="compare">
+      <div><div class="label czqr">czQR</div><div class="barcode">${czqrHtml}</div></div>
+      <div><div class="label jsb">JsBarcode</div><div class="barcode">${jsbHtml}</div></div>
+    </div>`;
+}
+</script>
+</body>
+</html>

@@ -87,6 +87,19 @@
         const pts = r.points.map(p => [mx(p.x), my(p.y)]);
         const br = [pts[1][0] + pts[2][0] - pts[0][0], pts[1][1] + pts[2][1] - pts[0][1]];
 
+        // Module size in canvas pixels (average of 3 finders)
+        const avgMs = (r.points[0].estModuleSize + r.points[1].estModuleSize + r.points[2].estModuleSize) / 3;
+        const expandX = avgMs * 3.5 * scaleX;
+        const expandY = avgMs * 3.5 * scaleY;
+
+        // Compute bounding box from the 4 corners, expanded to QR outer edge
+        const allX = [pts[0][0], pts[1][0], pts[2][0], br[0]];
+        const allY = [pts[0][1], pts[1][1], pts[2][1], br[1]];
+        const bx = Math.max(0, Math.min(...allX) - expandX);
+        const by = Math.max(0, Math.min(...allY) - expandY);
+        const bw = Math.min(cw - bx, Math.max(...allX) - bx + expandX);
+        const bh = Math.min(ch - by, Math.max(...allY) - by + expandY);
+
         // Fill
         ctx.fillStyle = fillColor;
         ctx.beginPath();
@@ -97,22 +110,29 @@
         ctx.closePath();
         ctx.fill();
 
-        // Border
-        ctx.lineWidth = lineWidth * 0.75;
+        // Corner brackets (same style as barcodes)
+        ctx.lineWidth = lineWidth;
         ctx.strokeStyle = lineColor;
-        ctx.stroke();
+        drawCorners(bx, by, bw, bh);
 
-        // Corner dots
+        // 3 finder pattern dots (larger, prominent)
         if (showQRDots) {
+          const dr = dotRadius * 1.5;
           ctx.fillStyle = lineColor;
-          for (const pt of [...pts, br]) {
+          for (let i = 0; i < 3; i++) {
             ctx.beginPath();
-            ctx.arc(pt[0], pt[1], dotRadius, 0, Math.PI * 2);
+            ctx.arc(pts[i][0], pts[i][1], dr, 0, Math.PI * 2);
             ctx.fill();
+            // White inner circle
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            ctx.arc(pts[i][0], pts[i][1], dr * 0.45, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = lineColor;
           }
         }
 
-        drawLabel('QR', pts[0][0], pts[0][1]);
+        drawLabel('QR', bx, by);
 
       } else if (r.bounds && markerStyle !== 'none') {
         const bx = mx(r.bounds.x), by = my(r.bounds.y);
