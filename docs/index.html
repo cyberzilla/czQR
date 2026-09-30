@@ -1685,8 +1685,6 @@
 
                 toast('Data Matrix generated instantly! ⚡');
             } catch (e) {
-                $('errMsg').style.display = 'block';
-                $('errMsg').textContent = e.message;
                 toast(e.message, true);
             } finally {
                 const elapsed = Date.now() - _loadStart;
