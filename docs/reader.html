@@ -39,6 +39,13 @@
             --rx: 24px
         }
 
+        ::-webkit-scrollbar { width: 6px; height: 6px }
+        ::-webkit-scrollbar-track { background: rgba(255,255,255,0.03); border-radius: 3px }
+        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px }
+        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2) }
+        * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.1) transparent }
+
+
         body {
             font-family: 'Inter', -apple-system, sans-serif;
             background: var(--bg);
@@ -1387,13 +1394,13 @@
                         if (url.protocol === 'http:' || url.protocol === 'https:')
                             linkBtn = ` <a href="${escHtml(r.data)}" target="_blank" rel="noopener" style="color:var(--cy);font-size:12px">🔗 Open</a>`;
                     } catch {}
-                    html += `<div style="background:var(--bg);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-bottom:8px">
+                    html += `<div style="background:rgba(255,255,255,0.03);border:1px solid var(--bdr);border-radius:10px;padding:16px;margin-bottom:12px;text-align:left;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
                         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
-                            <span style="background:var(--p);color:#fff;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${i+1}</span>
-                            <span style="font-weight:600;color:var(--fg)">${fmtLabel}</span>
-                            <span style="color:var(--fg2);font-size:12px">${type}</span>${linkBtn}
+                            <span style="background:var(--cy);color:#000;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${i+1}</span>
+                            <span style="font-weight:600;color:var(--t1)">${fmtLabel}</span>
+                            <span style="color:var(--t2);font-size:12px">${type}</span>${linkBtn}
                         </div>
-                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:13px;color:var(--cy);cursor:pointer" onclick="navigator.clipboard.writeText(this.textContent).then(()=>{this.style.opacity='0.5';setTimeout(()=>this.style.opacity='1',300)})">${escHtml(r.data)}</div>
+                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:14px;color:var(--em);cursor:pointer;background:rgba(16,185,129,0.08);padding:10px;border-radius:6px;border:1px solid rgba(16,185,129,0.2)" onclick="navigator.clipboard.writeText(this.textContent).then(()=>{this.style.opacity='0.5';setTimeout(()=>this.style.opacity='1',300)})">${escHtml(r.data)}</div>
                     </div>`;
                     // Add each to history
                     if (r.data !== lastResult) {
