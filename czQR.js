@@ -2910,10 +2910,15 @@ class czQR {
     let shortest = head.slice();
     if (fallbackFrom >= text.length) {
       if (rest.length === 0) {
-        // Fits exact
+        // Exact triplet fit — still need unlatch so padding isn't read as C40
+        shortest.push(254);
       } else if (rest.length === 2) {
+        // Pad the last incomplete triplet with shift value 0, then unlatch
         shortest.push(...czQR._dm_triplet(rest[0], rest[1], 0));
+        shortest.push(254);
       } else if (asciiFrom === text.length - 1 && valueCharIndex[values.length - 2] !== asciiFrom) {
+        // Single remaining char — unlatch implicitly via ASCII encode
+        shortest.push(254);
         shortest.push(...czQR._dm_encodeASCII(text.slice(asciiFrom)));
       } else {
         shortest.push(254);
