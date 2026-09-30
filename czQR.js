@@ -3327,20 +3327,21 @@ class czQR {
     let enc;
     if (mode === 'auto') {
       enc = czQR._dm_optimizeEncoding(text);
-    } else if (mode === 'ascii') {
-      enc = czQR._dm_encodeASCII(text);
-    } else if (mode === 'c40') {
-      enc = czQR._dm_encodeC40(text);
-    } else if (mode === 'text') {
-      enc = czQR._dm_encodeText(text);
-    } else if (mode === 'x12') {
-      enc = czQR._dm_encodeX12(text);
-    } else if (mode === 'edifact') {
-      enc = czQR._dm_encodeEDIFACT(text);
-    } else if (mode === 'base256') {
-      enc = czQR._dm_encodeBase256(text.split('').map(c => c.charCodeAt(0)));
     } else {
-      enc = czQR._dm_optimizeEncoding(text);
+      const modeNames = { ascii:'ASCII', c40:'C40', text:'TEXT', x12:'X12', edifact:'EDIFACT', base256:'Base256' };
+      try {
+        if (mode === 'ascii') enc = czQR._dm_encodeASCII(text);
+        else if (mode === 'c40') enc = czQR._dm_encodeC40(text);
+        else if (mode === 'text') enc = czQR._dm_encodeText(text);
+        else if (mode === 'x12') enc = czQR._dm_encodeX12(text);
+        else if (mode === 'edifact') enc = czQR._dm_encodeEDIFACT(text);
+        else if (mode === 'base256') enc = czQR._dm_encodeBase256(text.split('').map(c => c.charCodeAt(0)));
+        else enc = czQR._dm_optimizeEncoding(text);
+        if (!enc || !enc.length) throw new Error('encoding produced no codewords');
+      } catch (e) {
+        const mn = modeNames[mode] || mode;
+        throw new Error(`${mn} mode cannot encode this content. ${mn === 'X12' ? 'X12 only supports: 0-9, A-Z, space, CR, *, >' : mn === 'EDIFACT' ? 'EDIFACT only supports ASCII 32-94' : mn === 'C40' ? 'C40 is optimized for uppercase, digits, and space' : mn === 'TEXT' ? 'TEXT is optimized for lowercase, digits, and space' : 'Try Auto mode.'}`);
+      }
     }
     const sym = czQR._dm_findSize(enc.length);
     if (!sym) throw new Error(`Data too long for Data Matrix (${enc.length} codewords)`);
