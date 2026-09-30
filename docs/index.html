@@ -1716,13 +1716,15 @@
                     const svgBlob = new Blob([lastBC.svg], {type: 'image/svg+xml'});
                     const url = URL.createObjectURL(svgBlob);
                     img.onload = () => {
-                        const s = Math.max(img.width, img.height, 800);
+                        const w = img.naturalWidth || parseInt((lastBC.svg.match(/width="(\d+)"/) || [])[1]) || 800;
+                        const h = img.naturalHeight || parseInt((lastBC.svg.match(/height="(\d+)"/) || [])[1]) || 800;
+                        const s = Math.max(w, h, 800);
                         const cvs = document.createElement('canvas');
                         cvs.width = s; cvs.height = s;
                         const ctx = cvs.getContext('2d');
                         ctx.fillStyle = '#ffffff';
                         ctx.fillRect(0, 0, s, s);
-                        ctx.drawImage(img, (s - img.width) / 2, (s - img.height) / 2, img.width, img.height);
+                        ctx.drawImage(img, (s - w) / 2, (s - h) / 2, w, h);
                         URL.revokeObjectURL(url);
                         const ext = fmt === 'webp' ? 'webp' : 'png';
                         const mime = fmt === 'webp' ? 'image/webp' : 'image/png';
@@ -1745,7 +1747,7 @@
         }
 
         async function copyURI() {
-            if (currentMode === 'barcode') {
+            if (currentMode === 'barcode' || currentMode === 'datamatrix') {
                 if(!lastBC) return;
                 const b64 = btoa(lastBC.svg);
                 const uri = `data:image/svg+xml;base64,${b64}`;
