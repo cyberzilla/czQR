@@ -547,7 +547,25 @@
   static dataMatrix(data, options = {}) {
     czQR._dm_initGF();
     const text = String(data);
-    const enc = czQR._dm_optimizeEncoding(text);
+    const mode = (options.mode || 'auto').toLowerCase();
+    let enc;
+    if (mode === 'auto') {
+      enc = czQR._dm_optimizeEncoding(text);
+    } else if (mode === 'ascii') {
+      enc = czQR._dm_encodeASCII(text);
+    } else if (mode === 'c40') {
+      enc = czQR._dm_encodeC40(text);
+    } else if (mode === 'text') {
+      enc = czQR._dm_encodeText(text);
+    } else if (mode === 'x12') {
+      enc = czQR._dm_encodeX12(text);
+    } else if (mode === 'edifact') {
+      enc = czQR._dm_encodeEDIFACT(text);
+    } else if (mode === 'base256') {
+      enc = czQR._dm_encodeBase256(text.split('').map(c => c.charCodeAt(0)));
+    } else {
+      enc = czQR._dm_optimizeEncoding(text);
+    }
     const sym = czQR._dm_findSize(enc.length);
     if (!sym) throw new Error(`Data too long for Data Matrix (${enc.length} codewords)`);
 

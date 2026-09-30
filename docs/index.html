@@ -1142,6 +1142,18 @@
                     <textarea class="ft" id="dmData" placeholder="Enter text, URL, or data…">https://github.com/cyberzilla/czQR</textarea>
                 </div>
 
+                <div class="fg">
+                    <label class="fl">Encoding Mode</label>
+                    <select class="fi" id="dmMode">
+                        <option value="auto" selected>Auto (Optimal)</option>
+                        <option value="ascii">ASCII</option>
+                        <option value="c40">C40 (Uppercase)</option>
+                        <option value="text">TEXT (Lowercase)</option>
+                        <option value="x12">X12 (ANSI X12)</option>
+                        <option value="edifact">EDIFACT</option>
+                        <option value="base256">Base256 (Binary)</option>
+                    </select>
+                </div>
                 <div class="r2">
                     <div class="fg">
                         <label class="fl">Output Size: <span id="dms_v">300</span>px</label>
@@ -1455,6 +1467,10 @@
             el.addEventListener('input', () => { if ($(a)) $(a).textContent = el.value; if ($(b)) $(b).textContent = el.value; });
         });
 
+        // Data Matrix mode change → regenerate
+        const dmModeEl = $('dmMode');
+        if (dmModeEl) dmModeEl.addEventListener('change', () => { if (currentMode === 'datamatrix') generate(); });
+
         async function generate() {
             const myToken = ++_genToken;
             if (currentMode === 'barcode') return generateBarcode(myToken);
@@ -1655,8 +1671,9 @@
                 const margin = parseInt(v('dmMargin'));
                 const fg = v('dmFg');
                 const bg = v('dmBg');
+                const mode = v('dmMode');
 
-                const svg = czQR.dataMatrix(data, { size, fg, bg, margin, output: 'svg' });
+                const svg = czQR.dataMatrix(data, { size, fg, bg, margin, mode, output: 'svg' });
                 lastQR = { format: 'svg', matrix: null };
                 lastBC = { svg, format: 'svg', ext: 'svg' };
 
