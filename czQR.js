@@ -2935,18 +2935,23 @@ class czQR {
   }
 
   static _dm_encodeX12(text) {
-    if (text.length === 0 || text.length % 3 !== 0) return undefined;
+    if (text.length === 0) return undefined;
     const values = [];
     for (let i = 0; i < text.length; i++) {
       const { set, value } = czQR._x12Value(text.charCodeAt(i));
       if (set === -1) return undefined;
       values.push(value);
     }
-    const head = [238];
-    for (let i = 0; i < values.length; i += 3) {
+    const head = [238]; // X12 latch
+    const fullTrips = Math.floor(values.length / 3) * 3;
+    for (let i = 0; i < fullTrips; i += 3) {
       head.push(...czQR._dm_triplet(values[i], values[i + 1], values[i + 2]));
     }
-    head.push(254);
+    head.push(254); // unlatch to ASCII
+    // Encode remaining 1-2 chars as ASCII
+    for (let i = fullTrips; i < text.length; i++) {
+      head.push(text.charCodeAt(i) + 1);
+    }
     return head;
   }
 
