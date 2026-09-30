@@ -1,9 +1,9 @@
-# czQR — QR Code Generator & Reader
+# czQR — QR Code, Data Matrix & Barcode Generator & Reader
 
 [![Support Development](https://img.shields.io/badge/Support%20Development-PayPal-00457C?style=for-the-badge&logo=paypal&logoColor=white)](https://www.paypal.com/paypalme/abudzakiyyah/7usd?country.x=USD)
 
-> **Zero-dependency**, single-file QR Code & Barcode **generator & reader** for JavaScript.  
-> Supports **PNG, SVG, WEBP, HTML, ASCII** output — with **rounded modules**, **finder pattern styling**, **logo**, **label**, **transparent background**, **built-in camera/image QR reader**, and **1D barcode scanner** (EAN-13, EAN-8, UPC-A, Code-128, Code-39, ITF).
+> **Zero-dependency**, single-file QR Code, Data Matrix & Barcode **generator & reader** for JavaScript.  
+> Supports **PNG, SVG, WEBP, HTML, ASCII** output — with **rounded modules**, **finder pattern styling**, **logo**, **label**, **transparent background**, **built-in camera/image reader**, **Data Matrix ECC200** (all 6 encoding modes), and **1D barcode scanner** (EAN-13, EAN-8, UPC-A, Code-128, Code-39, ITF).
 
 ---
 
@@ -11,13 +11,26 @@
 
 ```
 czQR/
-├── czQR.js            # Source — full with comments (development)
+├── src/                       # Source modules (concatenated by build.js)
+│   ├── core.js                #   Class shell & constants
+│   ├── utils.js               #   Shared helpers
+│   ├── qr-encode.js           #   QR Code encoder
+│   ├── qr-decode.js           #   QR Code decoder
+│   ├── barcode-encode.js      #   1D Barcode generator
+│   ├── datamatrix-encode.js   #   Data Matrix ECC200 encoder
+│   ├── datamatrix-decode.js   #   Data Matrix decoder & image reader
+│   ├── barcode-decode.js      #   1D Barcode decoder
+│   ├── readall.js             #   Multi-code reader orchestrator
+│   ├── markers.js             #   Detection marker overlay
+│   └── closing.js             #   Class closing
+├── czQR.js                    # Built — full with comments (development)
 ├── dist/
-│   └── czQR.min.js    # Minified — production ready (~71 KB)
+│   └── czQR.min.js            # Minified — production ready (~105 KB)
 ├── docs/
-│   ├── index.html     # Demo — QR Generator (GitHub Pages)
-│   ├── reader.html    # Demo — QR Reader (GitHub Pages)
-│   └── czQR.min.js    # Minified copy for demo
+│   ├── index.html             # Demo — Generator (GitHub Pages)
+│   ├── reader.html            # Demo — Reader (GitHub Pages)
+│   └── czQR.min.js            # Minified copy for demo
+├── build.js                   # Build script (concat + terser)
 ├── LICENSE
 └── README.md
 ```
@@ -439,7 +452,85 @@ for (const r of results) {
 }
 ```
 
-Supports: multiple QR codes side by side, QR + barcode mixed, multiple barcodes.
+Supports: multiple QR codes side by side, QR + barcode mixed, multiple barcodes, Data Matrix.
+
+---
+
+## Data Matrix Generator API
+
+### `czQR.dataMatrix(data, options?)`
+
+Generate a Data Matrix ECC200 barcode.
+
+```javascript
+const svg = czQR.dataMatrix('Hello World', {
+  size: 300,
+  fg: '#000000',
+  bg: '#ffffff',
+  margin: 1,
+  output: 'svg'     // 'svg' | 'canvas' | 'png' | 'datauri'
+});
+document.getElementById('dm').innerHTML = svg;
+```
+
+### Encoding Modes
+
+The encoder automatically selects the optimal encoding mode (or mix of modes) via dynamic programming:
+
+| Mode | Optimal For | Efficiency |
+|------|------------|------------|
+| **ASCII** | Digits, mixed content | 1 CW/char, digit pairs = 1 CW/2 chars |
+| **C40** | Uppercase + digits + space | 3 chars → 2 CW |
+| **TEXT** | Lowercase + digits + space | 3 chars → 2 CW |
+| **X12** | ANSI X12 (`*`, `>`, CR, uppercase) | 3 chars → 2 CW |
+| **EDIFACT** | Characters 32–94 | 4 chars → 3 CW |
+| **Base256** | Binary data (bytes > 127) | 1 CW/byte + length prefix |
+
+### Symbol Sizes
+
+24 standard square sizes from 10×10 (3 data CW) to 144×144 (1558 data CW).
+
+---
+
+## Data Matrix Reader API
+
+### `czQR.readDataMatrix(imageData)`
+
+Detect and decode a Data Matrix from an `ImageData` object.
+
+```javascript
+const result = czQR.readDataMatrix(imageData);
+if (result) {
+  console.log(result.data);     // "Hello World"
+  console.log(result.format);   // "datamatrix"
+  console.log(result.modes);    // ["ASCII", "C40"]
+  console.log(result.symbol);   // "18x18"
+}
+```
+
+### `czQR.decodeDataMatrix(matrix)`
+
+Decode from a known 2D module grid (array of arrays, 1=dark, 0=light).
+
+```javascript
+const result = czQR.decodeDataMatrix(moduleGrid);
+// { data: "...", modes: ["ASCII", "TEXT"], symbol: "22x22" }
+```
+
+### Data Matrix Result Object
+
+```javascript
+{
+  data: "Hello World",        // Decoded content
+  format: "datamatrix",       // Format identifier
+  type: "2d",                 // "2d" for Data Matrix
+  modes: ["ASCII", "C40"],    // Encoding modes detected
+  symbol: "18x18",            // Symbol dimensions
+  bounds: { x, y, w, h }     // Detection bounds (image reader)
+}
+```
+
+Data Matrix is also detected by `czQR.readAll()` alongside QR codes and barcodes.
 
 ---
 
@@ -568,8 +659,10 @@ qr.info()                // Object — metadata (version, mode, utilization, etc
 | **Styled QR Reader** | ✅ |
 | **RS Error Correction** | ✅ (Sugiyama) |
 | **1D Barcode Reader** | ✅ (EAN-13, EAN-8, UPC-A, Code-128, Code-39, ITF) |
-| **Auto-detect QR + Barcode** | ✅ |
-| **Multi-Code Reader** | ✅ (`readAll()` — multiple QR + barcodes) |
+| **Data Matrix Generator** | ✅ (ECC200, all 6 encoding modes, DP optimizer) |
+| **Data Matrix Reader** | ✅ (image + camera, mode detection, RS correction) |
+| **Auto-detect QR + Barcode + DM** | ✅ |
+| **Multi-Code Reader** | ✅ (`readAll()` — QR + barcodes + Data Matrix) |
 
 ---
 
