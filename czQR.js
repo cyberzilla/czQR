@@ -2752,10 +2752,12 @@ class czQR {
         if (segLuma[i] > gMax) gMax = segLuma[i];
       }
       if (gMax - gMin > 80) {
-        const gThresh = gMin + (gMax - gMin) * 0.45;
-        const binGlobal = new Uint8Array(w);
-        for (let i = 0; i < w; i++) binGlobal[i] = segLuma[i] <= gThresh ? 1 : 0;
-        tryDecode(binGlobal);
+        for (const frac of [0.3, 0.45, 0.6]) {
+          const gThresh = gMin + (gMax - gMin) * frac;
+          const binGlobal = new Uint8Array(w);
+          for (let i = 0; i < w; i++) binGlobal[i] = segLuma[i] <= gThresh ? 1 : 0;
+          tryDecode(binGlobal);
+        }
       }
     };
 
