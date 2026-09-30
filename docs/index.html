@@ -616,6 +616,50 @@
             display: none
         }
 
+        .qr-loading {
+            position: absolute;
+            inset: 0;
+            display: none;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            gap: 16px;
+            background: rgba(255, 255, 255, .92);
+            backdrop-filter: blur(8px);
+            border-radius: 16px;
+            z-index: 10;
+            opacity: 0;
+            transition: opacity .25s ease
+        }
+
+        .qr-loading.active {
+            display: flex;
+            opacity: 1
+        }
+
+        .qr-loading .ld-spinner {
+            width: 44px;
+            height: 44px;
+            border: 4px solid rgba(139, 92, 246, .15);
+            border-top-color: var(--p);
+            border-right-color: var(--cy);
+            border-radius: 50%;
+            animation: sp .8s linear infinite
+        }
+
+        .qr-loading .ld-text {
+            font-size: 13px;
+            font-weight: 600;
+            color: #5a5a6e;
+            letter-spacing: .3px;
+            animation: ld-pulse 1.5s ease-in-out infinite
+        }
+
+        @keyframes ld-pulse {
+            0%, 100% { opacity: .5 }
+            50% { opacity: 1 }
+        }
+
         @keyframes sp {
             to {
                 transform: rotate(360deg)
@@ -906,17 +950,17 @@
                 </div>
 
                 <div class="fg">
-                    <label class="fl">Quiet Zone: <span id="qv">2</span></label>
-                    <div class="rw"><input type="range" class="rs" id="quiet" min="0" max="8" value="2"><span class="rv"
-                            id="qb">2</span></div>
+                    <label class="fl">Quiet Zone: <span id="qv">1</span></label>
+                    <div class="rw"><input type="range" class="rs" id="quiet" min="0" max="8" value="1"><span class="rv"
+                            id="qb">1</span></div>
                 </div>
 
                 <div class="r2">
                     <div class="fg">
                         <label class="fl">Foreground</label>
                         <div class="ci">
-                            <input type="color" class="cs" id="fgSw" value="#000000">
-                            <input type="text" class="ch" id="fg" value="#000000" maxlength="7">
+                            <input type="color" class="cs" id="fgSw" value="#009736">
+                            <input type="text" class="ch" id="fg" value="#009736" maxlength="7">
                         </div>
                     </div>
                     <div class="fg">
@@ -942,10 +986,10 @@
                 </div>
 
                 <div class="fg" id="radiusGroup">
-                    <label class="fl">Module Radius: <span id="mrv">0</span>% <span id="mrl"
-                            style="color:var(--t3);font-weight:400">— Sharp</span></label>
-                    <div class="rw"><input type="range" class="rs" id="modRadius" min="0" max="50" value="0"><span
-                            class="rv" id="mrb">0</span></div>
+                    <label class="fl">Module Radius: <span id="mrv">23</span>% <span id="mrl"
+                            style="color:var(--t3);font-weight:400">— Rounded</span></label>
+                    <div class="rw"><input type="range" class="rs" id="modRadius" min="0" max="50" value="23"><span
+                            class="rv" id="mrb">23</span></div>
                 </div>
 
                 <div class="sep"></div>
@@ -953,39 +997,39 @@
                 <!-- Finder Pattern Styling -->
                 <div class="fg">
                     <label class="tgl">
-                        <input type="checkbox" id="finderEnabled">
+                        <input type="checkbox" id="finderEnabled" checked>
                         <span class="tgl-sw"></span>
                         Finder Pattern (Eye) Styling
                     </label>
                 </div>
 
-                <div class="eopt" id="finderOpts">
+                <div class="eopt on" id="finderOpts">
                     <div class="r2">
                         <div class="fg">
                             <label class="fl">Outer Frame Color</label>
                             <div class="ci">
-                                <input type="color" class="cs" id="finderOuterSw" value="#FF0000">
-                                <input type="text" class="ch" id="finderOuterColor" value="#FF0000" maxlength="7">
+                                <input type="color" class="cs" id="finderOuterSw" value="#EE2A35">
+                                <input type="text" class="ch" id="finderOuterColor" value="#EE2A35" maxlength="7">
                             </div>
                         </div>
                         <div class="fg">
                             <label class="fl">Inner Dot Color</label>
                             <div class="ci">
-                                <input type="color" class="cs" id="finderInnerSw" value="#0000FF">
-                                <input type="text" class="ch" id="finderInnerColor" value="#0000FF" maxlength="7">
+                                <input type="color" class="cs" id="finderInnerSw" value="#000000">
+                                <input type="text" class="ch" id="finderInnerColor" value="#000000" maxlength="7">
                             </div>
                         </div>
                     </div>
                     <div class="r2">
                         <div class="fg">
-                            <label class="fl">Outer Radius: <span id="forv">25</span>%</label>
+                            <label class="fl">Outer Radius: <span id="forv">10</span>%</label>
                             <div class="rw"><input type="range" class="rs" id="finderOuterRadius" min="0" max="50"
-                                    value="25"><span class="rv" id="forb">25</span></div>
+                                    value="10"><span class="rv" id="forb">10</span></div>
                         </div>
                         <div class="fg">
-                            <label class="fl">Inner Radius: <span id="firv">25</span>%</label>
+                            <label class="fl">Inner Radius: <span id="firv">17</span>%</label>
                             <div class="rw"><input type="range" class="rs" id="finderInnerRadius" min="0" max="50"
-                                    value="25"><span class="rv" id="firb">25</span></div>
+                                    value="17"><span class="rv" id="firb">17</span></div>
                         </div>
                     </div>
                 </div>
@@ -1159,6 +1203,10 @@
                             </svg>
                             <p>Enter your content and click<br><strong>Generate QR Code</strong></p>
                         </div>
+                        <div class="qr-loading" id="qrLoading">
+                            <div class="ld-spinner"></div>
+                            <span class="ld-text">Generating…</span>
+                        </div>
                         <div id="qrResult"></div>
                         <div class="errmsg" id="errMsg"></div>
                     </div>
@@ -1312,6 +1360,15 @@
             $('errMsg').style.display = 'none';
             $('qrResult').innerHTML = '';
 
+            // Show loading overlay on preview (min 500ms to avoid flicker)
+            const loader = $('qrLoading');
+            loader.querySelector('.ld-text').textContent = 'Generating…';
+            loader.classList.add('active');
+            const _loadStart = Date.now();
+
+            // Allow the browser to paint the loading overlay before heavy work
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
             try {
                 const ec = v('ec');
                 const format = v('format');
@@ -1400,6 +1457,10 @@
                 $('errMsg').textContent = e.message;
                 toast(e.message, true);
             } finally {
+                const elapsed = Date.now() - _loadStart;
+                const remaining = Math.max(0, 500 - elapsed);
+                await new Promise(r => setTimeout(r, remaining));
+                loader.classList.remove('active');
                 btn.disabled = false;
                 btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> Generate QR Code';
             }
@@ -1415,7 +1476,15 @@
 
             $('placeholder').style.display = 'none';
             $('errMsg').style.display = 'none';
-            
+
+            // Show loading overlay on preview (min 500ms to avoid flicker)
+            const loader = $('qrLoading');
+            loader.querySelector('.ld-text').textContent = 'Generating…';
+            loader.classList.add('active');
+            const _loadStart = Date.now();
+
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
             try {
                 const format = v('bcFormat');
                 const options = {
@@ -1440,6 +1509,10 @@
                 $('errMsg').textContent = e.message;
                 toast(e.message, true);
             } finally {
+                const elapsed = Date.now() - _loadStart;
+                const remaining = Math.max(0, 500 - elapsed);
+                await new Promise(r => setTimeout(r, remaining));
+                loader.classList.remove('active');
                 btn.disabled = false;
                 btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg> Generate Barcode';
             }

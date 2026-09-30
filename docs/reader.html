@@ -509,11 +509,22 @@
             justify-content: center;
             cursor: pointer;
             font-size: 16px;
-            transition: .2s
+            line-height: 1;
+            padding: 0;
+            transition: .2s;
+            backdrop-filter: blur(8px)
+        }
+
+        .img-preview .clear-img svg {
+            width: 16px;
+            height: 16px;
+            pointer-events: none
         }
 
         .img-preview .clear-img:hover {
-            background: var(--ro)
+            background: var(--ro);
+            border-color: var(--ro);
+            transform: scale(1.1)
         }
 
         /* Result area */
@@ -934,7 +945,7 @@
                 <div class="img-preview" id="imgPreview" style="position:relative">
                     <img id="imgPreviewSrc" alt="Preview">
                     <canvas class="img-detect-canvas" id="imgDetectCanvas"></canvas>
-                    <button class="clear-img" id="btnClearImg" title="Remove image">&times;</button>
+                    <button class="clear-img" id="btnClearImg" title="Remove image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
                     <div class="loading-overlay" id="fileLoading" style="display:none">
                         <div class="spinner"></div>
                         <span>Decoding QR code...</span>
