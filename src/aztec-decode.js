@@ -7,38 +7,71 @@
     if (rows === 0) return null;
     const center = Math.floor(rows / 2);
 
+    
     let isCompact = true;
     let mmRadius = 5;
     if (matrix[center]?.[center] !== 1) return null; // center must be dark
-    // Verify inner ring pattern (must match for any Aztec)
     if (matrix[center - 1]?.[center] !== 0 || matrix[center - 2]?.[center] !== 1 ||
         matrix[center - 3]?.[center] !== 0 || matrix[center - 4]?.[center] !== 1) return null;
+        
+    let isFull = (matrix[center - 5]?.[center - 5] === 0);
 
-    // Try compact first (more common for smaller data), then full-range
-    // Both are attempted — whichever succeeds the mode message RS decode wins
     const tryDecode = (compact) => {
       const rad = compact ? 5 : 7;
-      const offsets = compact ? [0,1,2,3,4,5,6] : [0,1,2,3,4,5,6,7,8,9];
       const bits = [];
-      for (let i of offsets) bits.push(matrix[center - rad]?.[center - rad + 2 + i] || 0);
-      for (let i of offsets) bits.push(matrix[center - rad + 2 + i]?.[center + rad] || 0);
-      for (let i of offsets) bits.push(matrix[center + rad]?.[center + rad - 2 - i] || 0);
-      for (let i of offsets) bits.push(matrix[center + rad - 2 - i]?.[center - rad] || 0);
+      if (compact) {
+        for (let i = 0; i < 7; i++) {
+          let offset = center - 3 + i;
+          bits.push(matrix[center - 5]?.[offset] || 0);
+        }
+        for (let i = 0; i < 7; i++) {
+          let offset = center - 3 + i;
+          bits.push(matrix[offset]?.[center + 5] || 0);
+        }
+        for (let i = 0; i < 7; i++) {
+          let offset = center - 3 + (6 - i);
+          bits.push(matrix[center + 5]?.[offset] || 0);
+        }
+        for (let i = 0; i < 7; i++) {
+          let offset = center - 3 + (6 - i);
+          bits.push(matrix[offset]?.[center - 5] || 0);
+        }
+      } else {
+        for (let i = 0; i < 10; i++) {
+          let offset = center - 5 + i + Math.floor(i / 5);
+          bits.push(matrix[center - 7]?.[offset] || 0);
+        }
+        for (let i = 0; i < 10; i++) {
+          let offset = center - 5 + i + Math.floor(i / 5);
+          bits.push(matrix[offset]?.[center + 7] || 0);
+        }
+        for (let i = 0; i < 10; i++) {
+          let offset = center - 5 + (9 - i) + Math.floor((9 - i) / 5);
+          bits.push(matrix[center + 7]?.[offset] || 0);
+        }
+        for (let i = 0; i < 10; i++) {
+          let offset = center - 5 + (9 - i) + Math.floor((9 - i) / 5);
+          bits.push(matrix[offset]?.[center - 7] || 0);
+        }
+      }
       const words = [];
       for (let i = 0; i < bits.length; i += 4)
         words.push((bits[i] << 3) | (bits[i+1] << 2) | (bits[i+2] << 1) | bits[i+3]);
       const ecCount = compact ? 5 : 6;
       return czQR._az_rsDecode(words, ecCount, 4);
     };
-    
-    let correctedMM = tryDecode(true);
-    if (correctedMM) {
-      isCompact = true; mmRadius = 5;
-    } else {
+
+    let correctedMM = null;
+    if (isFull) {
       correctedMM = tryDecode(false);
       if (correctedMM) { isCompact = false; mmRadius = 7; }
       else return null;
+    } else {
+      correctedMM = tryDecode(true);
+      if (correctedMM) { isCompact = true; mmRadius = 5; }
+      else return null;
     }
+  
 
     const mmDataCount = isCompact ? 2 : 4;
     let modeMsg = 0;
@@ -56,53 +89,47 @@
 
     let wordSize = symLayers <= 2 ? 6 : symLayers <= 8 ? 8 : symLayers <= 22 ? 10 : 12;
 
-    const map = Array(rows).fill(0).map(() => Array(rows).fill(-1));
-    for (let r = 0; r < rows; r++) {
-      for (let c = 0; c < rows; c++) {
-        let dr = Math.abs(r - center);
-        let dc = Math.abs(c - center);
-        if (Math.max(dr, dc) <= mmRadius) map[r][c] = -2;
-        if (!isCompact && ((r - center) % 16 === 0 || (c - center) % 16 === 0)) map[r][c] = -2;
+
+    const baseMatrixSize = czQR._az_getBaseMatrixSize(symLayers, isCompact);
+    const matrixSize = czQR._az_getModuleCount(symLayers, isCompact);
+
+    const alignmentMap = Array(baseMatrixSize).fill(0);
+    if (isCompact) {
+      for (let i = 0; i < baseMatrixSize; i++) alignmentMap[i] = i;
+    } else {
+      let origCenter = Math.floor(baseMatrixSize / 2);
+      let center = Math.floor(matrixSize / 2);
+      for (let i = 0; i < origCenter; i++) {
+        let newOffset = i + Math.floor(i / 15);
+        alignmentMap[origCenter - i - 1] = center - newOffset - 1;
+        alignmentMap[origCenter + i] = center + newOffset + 1;
       }
     }
 
-    const allBits = [];
-    let layerRad = mmRadius;
-    for (let layer = 1; layer <= symLayers; layer++) {
-      layerRad += 2;
-      let sideLen = layerRad * 2;
-      
-      for (let i = 0; i < sideLen; i++) {
-        let r = center - layerRad;
-        let c = center - layerRad + i;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-        r = center - layerRad + 1;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-      }
-      for (let i = 0; i < sideLen; i++) {
-        let r = center - layerRad + i;
-        let c = center + layerRad;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-        c = center + layerRad - 1;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-      }
-      for (let i = 0; i < sideLen; i++) {
-        let r = center + layerRad;
-        let c = center + layerRad - i;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-        r = center + layerRad - 1;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-      }
-      for (let i = 0; i < sideLen; i++) {
-        let r = center + layerRad - i;
-        let c = center - layerRad;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-        c = center - layerRad + 1;
-        if (map[r]?.[c] === -1) { allBits.push(matrix[r][c]); map[r][c] = 1; }
-      }
-    }
+    const totalBitCap = czQR._az_getTotalBitCapacity(symLayers, isCompact);
+    const allBits = Array(totalBitCap).fill(0);
+    let rowOffset = 0;
 
-    const totalBitCap = isCompact ? (88 + 16 * symLayers) * symLayers : (112 + 16 * symLayers) * symLayers;
+    for (let i = 0; i < symLayers; i++) {
+      let rowSize = (symLayers - i) * 4 + (isCompact ? 9 : 12);
+      for (let j = 0; j < rowSize; j++) {
+        let columnOffset = j * 2;
+        for (let k = 0; k < 2; k++) {
+          allBits[rowOffset + columnOffset + k] = 
+            matrix[alignmentMap[i * 2 + j]][alignmentMap[i * 2 + k]];
+          
+          allBits[rowOffset + rowSize * 2 + columnOffset + k] = 
+            matrix[alignmentMap[baseMatrixSize - 1 - i * 2 - k]][alignmentMap[i * 2 + j]];
+          
+          allBits[rowOffset + rowSize * 4 + columnOffset + k] = 
+            matrix[alignmentMap[baseMatrixSize - 1 - i * 2 - j]][alignmentMap[baseMatrixSize - 1 - i * 2 - k]];
+          
+          allBits[rowOffset + rowSize * 6 + columnOffset + k] = 
+            matrix[alignmentMap[i * 2 + k]][alignmentMap[baseMatrixSize - 1 - i * 2 - j]];
+        }
+      }
+      rowOffset += rowSize * 8;
+    }
     const startPad = totalBitCap % wordSize;
     let allWords = [];
     for (let i = startPad; i + wordSize <= allBits.length; i += wordSize) {
