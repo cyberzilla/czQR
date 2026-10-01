@@ -251,13 +251,14 @@
     let dataWords = 0;
     let ecWords = 0;
     let stuffed = [];
+    let bitCapacity = 0;
     
     // Find symbol size
     for (let i = 1; i <= 32; i++) {
       let tryCompact = i <= 4 && compact;
       let curWordSize = i <= 2 ? 6 : i <= 8 ? 8 : i <= 22 ? 10 : 12;
-      let curTotal = (tryCompact ? 88 : 112) + 16 * i;
-      curTotal = (curTotal * i) / curWordSize;
+      let curBitCap = ((tryCompact ? 88 : 112) + 16 * i) * i;
+      let curTotal = Math.floor(curBitCap / curWordSize);
       
       let tryStuffed = czQR._az_stuffBits(bits, curWordSize);
       let curData = Math.ceil(tryStuffed.length / curWordSize);
@@ -274,6 +275,7 @@
         dataWords = curData;
         ecWords = curTotal - curData;
         stuffed = tryStuffed;
+        bitCapacity = curBitCap;
         break;
       }
     }
@@ -293,7 +295,10 @@
     let ecw = czQR._az_rs(dw, ecWords, wordSize);
     let allWords = [...dw, ...ecw];
     
+    // Convert to bits with startPad
+    let startPad = bitCapacity % wordSize;
     let allBits = [];
+    for (let i = 0; i < startPad; i++) allBits.push(0);
     for (let w of allWords) {
       for (let i = wordSize - 1; i >= 0; i--) allBits.push((w >> i) & 1);
     }

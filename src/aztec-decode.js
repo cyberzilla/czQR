@@ -102,25 +102,24 @@
       }
     }
 
+    const totalBitCap = isCompact ? (88 + 16 * symLayers) * symLayers : (112 + 16 * symLayers) * symLayers;
+    const startPad = totalBitCap % wordSize;
     let allWords = [];
-    for (let i = 0; i < allBits.length; i += wordSize) {
-      if (i + wordSize > allBits.length) break;
+    for (let i = startPad; i + wordSize <= allBits.length; i += wordSize) {
       let w = 0;
       for (let j = 0; j < wordSize; j++) w = (w << 1) | allBits[i + j];
       allWords.push(w);
     }
 
-    const curTotal = isCompact ? (88 + 16 * symLayers) * symLayers / wordSize : (112 + 16 * symLayers) * symLayers / wordSize;
-    const ecWords = Math.floor(curTotal) - dataWords;
+    const totalWordCount = Math.floor(totalBitCap / wordSize);
+    const ecWords = totalWordCount - dataWords;
     if (ecWords < 0) return null;
     const dataWordArr = allWords.slice(0, dataWords + ecWords);
 
     const correctedData = czQR._az_rsDecode(dataWordArr, ecWords, wordSize);
     if (!correctedData) return null;
 
-    // Convert data codewords to bits (skip startPad bits)
-    const totalBits = isCompact ? (88 + 16 * symLayers) * symLayers : (112 + 16 * symLayers) * symLayers;
-    const startPad = totalBits % wordSize;
+    // Convert data codewords to bits
     let cwBits = [];
     for (let i = 0; i < dataWords; i++) {
       let w = correctedData[i];
