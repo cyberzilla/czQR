@@ -4702,9 +4702,187 @@ class czQR {
   }
 
   static readAztec(imageData) {
-    // Very simplified placeholder detection to satisfy the build and integration
-    // A full locator would need robust grid sampling similar to Datamatrix.
-    return null; 
+    let bm;
+    try { bm = czQR._rd_binarize(imageData, 0); } catch(e) { return null; }
+    const { width: w, height: h, data } = bm;
+    if (w < 15 || h < 15) return null;
+
+    const get = (x, y) => (x >= 0 && x < w && y >= 0 && y < h) ? data[y * w + x] : 0;
+
+    // Scan for bull's eye center candidates
+    // The center of Aztec is a dark pixel with alternating dark/light rings
+    const step = Math.max(1, Math.floor(Math.min(w, h) / 80));
+    let bestResult = null;
+
+    for (let cy = 8; cy < h - 8; cy += step) {
+      for (let cx = 8; cx < w - 8; cx += step) {
+        if (!get(cx, cy)) continue; // center must be dark
+
+        // Check for alternating rings outward (dark, light, dark, light, dark)
+        // Measure ring widths in 4 directions
+        const dirs = [[1,0],[-1,0],[0,1],[0,-1]];
+        let valid = true;
+        let totalModSize = 0;
+        let ringCount = 0;
+
+        for (const [dx, dy] of dirs) {
+          let x = cx, y = cy;
+          let expected = 1; // start dark
+          let rings = [];
+          let runLen = 0;
+
+          for (let dist = 0; dist <= Math.min(w, h) / 2; dist++) {
+            const px = cx + dx * dist, py = cy + dy * dist;
+            if (px < 0 || px >= w || py < 0 || py >= h) break;
+            const v = get(px, py) ? 1 : 0;
+            if (v === expected) {
+              runLen++;
+            } else {
+              rings.push(runLen);
+              runLen = 1;
+              expected = v;
+              if (rings.length >= 6) break;
+            }
+          }
+          if (runLen > 0) rings.push(runLen);
+
+          // Need at least 5 alternating rings for compact (dark-light-dark-light-dark)
+          if (rings.length < 5) { valid = false; break; }
+
+          // All ring widths should be roughly similar (within 2x of each other)
+          const avgRing = (rings[0] + rings[1] + rings[2] + rings[3] + rings[4]) / 5;
+          for (let r = 0; r < 5; r++) {
+            if (rings[r] < avgRing * 0.3 || rings[r] > avgRing * 2.5) { valid = false; break; }
+          }
+          if (!valid) break;
+
+          totalModSize += avgRing;
+          ringCount++;
+        }
+
+        if (!valid || ringCount < 4) continue;
+
+        const modSize = totalModSize / ringCount;
+        if (modSize < 1.5) continue;
+
+        // Refine center by scanning for the center of mass of the central dark square
+        let sumX = 0, sumY = 0, cnt = 0;
+        const scanR = Math.ceil(modSize * 1.2);
+        for (let dy = -scanR; dy <= scanR; dy++) {
+          for (let dx = -scanR; dx <= scanR; dx++) {
+            if (get(cx + dx, cy + dy)) { sumX += cx + dx; sumY += cy + dy; cnt++; }
+          }
+        }
+        if (cnt === 0) continue;
+        const rcx = sumX / cnt, rcy = sumY / cnt;
+
+        // Try to determine compact vs full by checking ring count
+        // Compact: 5 rings (radius 5 modules), Full: 7 rings (radius 7 modules)
+        let isCompact = true;
+        // Check at radius ~6 modules — if still alternating, it's full-range
+        const checkDist = Math.round(modSize * 5.5);
+        let fullRings = 0;
+        for (const [dx, dy] of dirs) {
+          const px = Math.round(rcx + dx * checkDist), py = Math.round(rcy + dy * checkDist);
+          // For full-range, there should be more alternating rings at distance 6+
+          let r6 = 0, expected = get(Math.round(rcx + dx * Math.round(modSize * 5)), Math.round(rcy + dy * Math.round(modSize * 5))) ? 1 : 0;
+          for (let d = Math.round(modSize * 5); d <= Math.round(modSize * 7.5); d++) {
+            const x2 = Math.round(rcx + dx * d), y2 = Math.round(rcy + dy * d);
+            if (x2 < 0 || x2 >= w || y2 < 0 || y2 >= h) break;
+            const v = get(x2, y2) ? 1 : 0;
+            if (v !== expected) { r6++; expected = v; }
+          }
+          if (r6 >= 2) fullRings++;
+        }
+        if (fullRings >= 3) isCompact = false;
+
+        // Try both compact and full, see which one decodes
+        for (const tryCompact of (isCompact ? [true, false] : [false, true])) {
+          const result = czQR._az_trySampleAndDecode(bm, rcx, rcy, modSize, tryCompact);
+          if (result) {
+            if (!bestResult || result.data.length > bestResult.data.length) {
+              bestResult = result;
+            }
+          }
+        }
+
+        if (bestResult) return bestResult;
+      }
+    }
+
+    return bestResult;
+  }
+
+  static _az_trySampleAndDecode(bm, cx, cy, modSize, isCompact) {
+    const { width: w, height: h, data } = bm;
+    const get = (x, y) => (x >= 0 && x < w && y >= 0 && y < h) ? data[y * w + x] : 0;
+
+    // Determine expected matrix size
+    // Try multiple possible layer counts and see which one decodes
+    const maxLayers = isCompact ? 4 : 32;
+    const minLayers = 1;
+
+    // Estimate layers from the apparent size of the symbol
+    // Find the outermost dark module in each direction
+    let maxRadius = 0;
+    for (const [dx, dy] of [[1,0],[-1,0],[0,1],[0,-1]]) {
+      let lastDark = 0;
+      for (let d = 0; d < Math.min(w, h) / 2; d++) {
+        const px = Math.round(cx + dx * d), py = Math.round(cy + dy * d);
+        if (px < 0 || px >= w || py < 0 || py >= h) break;
+        if (get(px, py)) lastDark = d;
+        else if (d > lastDark + modSize * 3) break;
+      }
+      if (lastDark > maxRadius) maxRadius = lastDark;
+    }
+
+    const estModules = Math.round(maxRadius * 2 / modSize) + 1;
+
+    // Try a range of layer counts around the estimate
+    for (let layers = minLayers; layers <= maxLayers; layers++) {
+      const baseSize = isCompact ? 11 + layers * 4 : 14 + layers * 4;
+      const matrixSize = isCompact ? baseSize : baseSize + 1 + 2 * Math.floor((Math.floor(baseSize / 2) - 1) / 15);
+
+      // Check if estimated size is roughly compatible
+      if (Math.abs(matrixSize - estModules) > matrixSize * 0.4 && layers > 2) continue;
+
+      // Sample the grid
+      const matrix = [];
+      const halfSize = matrixSize / 2;
+
+      for (let r = 0; r < matrixSize; r++) {
+        const row = [];
+        for (let c = 0; c < matrixSize; c++) {
+          const px = Math.round(cx + (c - halfSize + 0.5) * modSize);
+          const py = Math.round(cy + (r - halfSize + 0.5) * modSize);
+          row.push(get(px, py) ? 1 : 0);
+        }
+        matrix.push(row);
+      }
+
+      // Try to decode
+      try {
+        const decoded = czQR.decodeAztec(matrix);
+        if (decoded && decoded.data && decoded.data.length > 0) {
+          const pad = Math.round(modSize * 2);
+          return {
+            data: decoded.data,
+            format: 'aztec',
+            type: '2d',
+            layers: decoded.layers,
+            compact: decoded.compact,
+            bounds: {
+              x: Math.max(0, Math.round(cx - halfSize * modSize) - pad),
+              y: Math.max(0, Math.round(cy - halfSize * modSize) - pad),
+              w: Math.round(matrixSize * modSize) + pad * 2,
+              h: Math.round(matrixSize * modSize) + pad * 2
+            }
+          };
+        }
+      } catch(e) {}
+    }
+
+    return null;
   }
   // ════════════════════════════════════════════════════════════════════════
   // barcode-decode.js — 1D barcode reading and decoding engine
