@@ -3939,7 +3939,7 @@ class czQR {
   }
 
 // ════════════════════════════════════════════════════════════════════════
-// aztec-encode.js — Aztec Code ECC200 generation
+// aztec-encode.js — Aztec Code generation (ISO/IEC 24778)
 // Based on ISO 24778 / etiket reference
 // ════════════════════════════════════════════════════════════════════════
 
@@ -4081,6 +4081,7 @@ class czQR {
 
   static aztec(data, options = {}) {
     let text = String(data);
+    if (text.length === 0) throw new Error("Aztec encoder: data must not be empty");
     let bytes = [];
     for (let i = 0; i < text.length; i++) {
       let code = text.codePointAt(i);
@@ -4090,7 +4091,7 @@ class czQR {
     
     let dataBits = czQR._az_encodeData(bytes);
     
-    let ecPercent = options.ecPercent || 33;
+    let ecPercent = options.ecPercent != null ? options.ecPercent : 33;
     let eccBits = Math.floor(dataBits.length * ecPercent / 100) + 11;
     let totalSizeBits = dataBits.length + eccBits;
     
@@ -4103,30 +4104,38 @@ class czQR {
     if (options.layers !== undefined) {
       symLayers = options.layers;
       isCompact = options.compact !== undefined ? options.compact : symLayers <= 4;
+      if (isCompact && symLayers > 4) throw new Error("Compact Aztec supports max 4 layers");
+      if (symLayers < 1 || symLayers > 32) throw new Error("Aztec layers must be 1-32");
       totalBitsInLayer = czQR._az_getTotalBitCapacity(symLayers, isCompact);
       wordSize = czQR._az_getWordSize(symLayers);
       stuffedBits = czQR._az_stuffBits(dataBits, wordSize);
+      let usableBits = totalBitsInLayer - (totalBitsInLayer % wordSize);
+      if (stuffedBits.length + eccBits > usableBits) throw new Error("Data too large for specified Aztec layers");
     } else {
-      for (let i = 0; i <= 32; i++) {
-        let compact = i <= 3;
-        let layers = compact ? i + 1 : i;
-        
-        // Exclude if options.compact says otherwise
-        if (compact && options.compact === false) continue;
-        if (!compact && options.compact === true) continue;
+      // Try compact 1-4, then full-range 1-32
+      const candidates = [];
+      if (options.compact !== false) {
+        for (let l = 1; l <= 4; l++) candidates.push({ layers: l, compact: true });
+      }
+      if (options.compact !== true) {
+        for (let l = 1; l <= 32; l++) candidates.push({ layers: l, compact: false });
+      }
+      // Sort by total module count (smallest first)
+      candidates.sort((a, b) => czQR._az_getModuleCount(a.layers, a.compact) - czQR._az_getModuleCount(b.layers, b.compact));
 
-        let curBitCap = czQR._az_getTotalBitCapacity(layers, compact);
+      for (const cand of candidates) {
+        let curBitCap = czQR._az_getTotalBitCapacity(cand.layers, cand.compact);
         if (totalSizeBits > curBitCap) continue;
         
-        let curWordSize = czQR._az_getWordSize(layers);
+        let curWordSize = czQR._az_getWordSize(cand.layers);
         let tryStuffed = czQR._az_stuffBits(dataBits, curWordSize);
         
         let usableBits = curBitCap - (curBitCap % curWordSize);
-        if (compact && tryStuffed.length > curWordSize * 64) continue;
+        if (cand.compact && tryStuffed.length > curWordSize * 64) continue;
         
         if (tryStuffed.length + eccBits <= usableBits) {
-          symLayers = layers;
-          isCompact = compact;
+          symLayers = cand.layers;
+          isCompact = cand.compact;
           wordSize = curWordSize;
           totalBitsInLayer = curBitCap;
           stuffedBits = tryStuffed;
@@ -4726,7 +4735,6 @@ class czQR {
         let ringCount = 0;
 
         for (const [dx, dy] of dirs) {
-          let x = cx, y = cy;
           let expected = 1; // start dark
           let rings = [];
           let runLen = 0;
@@ -4741,22 +4749,33 @@ class czQR {
               rings.push(runLen);
               runLen = 1;
               expected = v;
-              if (rings.length >= 6) break;
+              if (rings.length >= 7) break;
             }
           }
           if (runLen > 0) rings.push(runLen);
 
-          // Need at least 5 alternating rings for compact (dark-light-dark-light-dark)
+          // Need at least 5 alternating rings for compact
           if (rings.length < 5) { valid = false; break; }
 
-          // All ring widths should be roughly similar (within 2x of each other)
-          const avgRing = (rings[0] + rings[1] + rings[2] + rings[3] + rings[4]) / 5;
-          for (let r = 0; r < 5; r++) {
-            if (rings[r] < avgRing * 0.3 || rings[r] > avgRing * 2.5) { valid = false; break; }
+          // Ring[0] starts from center pixel so it's roughly half a module width
+          // Use rings[1..3] (full-width light-dark-light) for module size estimation
+          // These are the most reliable since they're inside the bull's eye
+          let estMod;
+          if (rings.length >= 4) {
+            estMod = (rings[1] + rings[2] + rings[3]) / 3;
+          } else {
+            estMod = (rings[1] + rings[2]) / 2;
+          }
+
+          // ring[0] should be roughly 0.3-1.2x module size (half because we start from center)
+          if (rings[0] < estMod * 0.2 || rings[0] > estMod * 1.5) { valid = false; break; }
+          // rings 1-3 should be within reasonable range
+          for (let r = 1; r < Math.min(4, rings.length); r++) {
+            if (rings[r] < estMod * 0.3 || rings[r] > estMod * 2.5) { valid = false; break; }
           }
           if (!valid) break;
 
-          totalModSize += avgRing;
+          totalModSize += estMod;
           ringCount++;
         }
 
@@ -4864,18 +4883,38 @@ class czQR {
       try {
         const decoded = czQR.decodeAztec(matrix);
         if (decoded && decoded.data && decoded.data.length > 0) {
-          const pad = Math.round(modSize * 2);
+          // Compute tight bounds by scanning actual dark pixels (same as DataMatrix)
+          const estR = halfSize * modSize;
+          const scanMargin = Math.round(modSize * 2);
+          const sx = Math.max(0, Math.round(cx - estR) - scanMargin);
+          const sy = Math.max(0, Math.round(cy - estR) - scanMargin);
+          const ex = Math.min(w - 1, Math.round(cx + estR) + scanMargin);
+          const ey = Math.min(h - 1, Math.round(cy + estR) + scanMargin);
+          let bMinX = ex, bMinY = ey, bMaxX = sx, bMaxY = sy;
+          for (let py = sy; py <= ey; py++) {
+            for (let px = sx; px <= ex; px++) {
+              if (get(px, py)) {
+                if (px < bMinX) bMinX = px;
+                if (px > bMaxX) bMaxX = px;
+                if (py < bMinY) bMinY = py;
+                if (py > bMaxY) bMaxY = py;
+              }
+            }
+          }
+          const pad = Math.round(modSize * 0.3);
+          const bullsEyeRadius = (isCompact ? 5 : 7) * modSize;
           return {
             data: decoded.data,
             format: 'aztec',
             type: '2d',
             layers: decoded.layers,
             compact: decoded.compact,
+            bullsEye: { x: cx, y: cy, radius: bullsEyeRadius },
             bounds: {
-              x: Math.max(0, Math.round(cx - halfSize * modSize) - pad),
-              y: Math.max(0, Math.round(cy - halfSize * modSize) - pad),
-              w: Math.round(matrixSize * modSize) + pad * 2,
-              h: Math.round(matrixSize * modSize) + pad * 2
+              x: Math.max(0, bMinX - pad),
+              y: Math.max(0, bMinY - pad),
+              w: bMaxX - bMinX + 1 + pad * 2,
+              h: bMaxY - bMinY + 1 + pad * 2
             }
           };
         }
@@ -5513,7 +5552,8 @@ class czQR {
       c.width = source.naturalWidth || source.width; c.height = source.naturalHeight || source.height;
       c.getContext('2d').drawImage(source, 0, 0);
       imgData = c.getContext('2d').getImageData(0, 0, c.width, c.height);
-    } else return [];
+    } else if (source && source.data && source.width && source.height) imgData = source;
+    else return [];
 
     const results = [];
     const addResult = (r) => {
@@ -5604,8 +5644,10 @@ class czQR {
           if (addResult(subRes)) earlyData.add(subRes.data);
         }
       }
+    } catch (e) {}
 
-      // Step 2d: Aztec
+    // Step 2d: Aztec
+    try {
       const azRes = czQR.readAztec(imgData);
       if (azRes && !earlyData.has(azRes.data)) {
         if (addResult(azRes)) earlyData.add(azRes.data);
@@ -6240,6 +6282,43 @@ class czQR {
         }
 
         drawLabel('QR', bx, by);
+
+      } else if (r.format === 'aztec' && r.bounds && markerStyle !== 'none') {
+        const bx = mx(r.bounds.x), by = my(r.bounds.y);
+        const bw = r.bounds.w * scaleX, bh = r.bounds.h * scaleY;
+
+        // Fill
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(bx, by, bw, bh);
+
+        // Corner brackets
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = lineColor;
+        drawCorners(bx, by, bw, bh);
+
+        // Bull's eye finder dot (like QR finder dots)
+        if (r.bullsEye && showQRDots) {
+          const bcx = mx(r.bullsEye.x), bcy = my(r.bullsEye.y);
+          const beR = r.bullsEye.radius * Math.min(scaleX, scaleY);
+          // Outer square ring (bull's eye is concentric squares)
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = lineWidth * 1.5;
+          const sqSize = beR * 1.2;
+          ctx.strokeRect(bcx - sqSize / 2, bcy - sqSize / 2, sqSize, sqSize);
+          // Center dot
+          const dr = dotRadius * 1.8;
+          ctx.fillStyle = lineColor;
+          ctx.beginPath();
+          ctx.arc(bcx, bcy, dr, 0, Math.PI * 2);
+          ctx.fill();
+          // White inner
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(bcx, bcy, dr * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        drawLabel('AZTEC', bx, by);
 
       } else if (r.bounds && markerStyle !== 'none') {
         const bx = mx(r.bounds.x), by = my(r.bounds.y);

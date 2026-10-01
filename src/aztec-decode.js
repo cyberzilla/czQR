@@ -411,7 +411,6 @@
         let ringCount = 0;
 
         for (const [dx, dy] of dirs) {
-          let x = cx, y = cy;
           let expected = 1; // start dark
           let rings = [];
           let runLen = 0;
@@ -426,22 +425,33 @@
               rings.push(runLen);
               runLen = 1;
               expected = v;
-              if (rings.length >= 6) break;
+              if (rings.length >= 7) break;
             }
           }
           if (runLen > 0) rings.push(runLen);
 
-          // Need at least 5 alternating rings for compact (dark-light-dark-light-dark)
+          // Need at least 5 alternating rings for compact
           if (rings.length < 5) { valid = false; break; }
 
-          // All ring widths should be roughly similar (within 2x of each other)
-          const avgRing = (rings[0] + rings[1] + rings[2] + rings[3] + rings[4]) / 5;
-          for (let r = 0; r < 5; r++) {
-            if (rings[r] < avgRing * 0.3 || rings[r] > avgRing * 2.5) { valid = false; break; }
+          // Ring[0] starts from center pixel so it's roughly half a module width
+          // Use rings[1..3] (full-width light-dark-light) for module size estimation
+          // These are the most reliable since they're inside the bull's eye
+          let estMod;
+          if (rings.length >= 4) {
+            estMod = (rings[1] + rings[2] + rings[3]) / 3;
+          } else {
+            estMod = (rings[1] + rings[2]) / 2;
+          }
+
+          // ring[0] should be roughly 0.3-1.2x module size (half because we start from center)
+          if (rings[0] < estMod * 0.2 || rings[0] > estMod * 1.5) { valid = false; break; }
+          // rings 1-3 should be within reasonable range
+          for (let r = 1; r < Math.min(4, rings.length); r++) {
+            if (rings[r] < estMod * 0.3 || rings[r] > estMod * 2.5) { valid = false; break; }
           }
           if (!valid) break;
 
-          totalModSize += avgRing;
+          totalModSize += estMod;
           ringCount++;
         }
 
@@ -549,18 +559,38 @@
       try {
         const decoded = czQR.decodeAztec(matrix);
         if (decoded && decoded.data && decoded.data.length > 0) {
-          const pad = Math.round(modSize * 2);
+          // Compute tight bounds by scanning actual dark pixels (same as DataMatrix)
+          const estR = halfSize * modSize;
+          const scanMargin = Math.round(modSize * 2);
+          const sx = Math.max(0, Math.round(cx - estR) - scanMargin);
+          const sy = Math.max(0, Math.round(cy - estR) - scanMargin);
+          const ex = Math.min(w - 1, Math.round(cx + estR) + scanMargin);
+          const ey = Math.min(h - 1, Math.round(cy + estR) + scanMargin);
+          let bMinX = ex, bMinY = ey, bMaxX = sx, bMaxY = sy;
+          for (let py = sy; py <= ey; py++) {
+            for (let px = sx; px <= ex; px++) {
+              if (get(px, py)) {
+                if (px < bMinX) bMinX = px;
+                if (px > bMaxX) bMaxX = px;
+                if (py < bMinY) bMinY = py;
+                if (py > bMaxY) bMaxY = py;
+              }
+            }
+          }
+          const pad = Math.round(modSize * 0.3);
+          const bullsEyeRadius = (isCompact ? 5 : 7) * modSize;
           return {
             data: decoded.data,
             format: 'aztec',
             type: '2d',
             layers: decoded.layers,
             compact: decoded.compact,
+            bullsEye: { x: cx, y: cy, radius: bullsEyeRadius },
             bounds: {
-              x: Math.max(0, Math.round(cx - halfSize * modSize) - pad),
-              y: Math.max(0, Math.round(cy - halfSize * modSize) - pad),
-              w: Math.round(matrixSize * modSize) + pad * 2,
-              h: Math.round(matrixSize * modSize) + pad * 2
+              x: Math.max(0, bMinX - pad),
+              y: Math.max(0, bMinY - pad),
+              w: bMaxX - bMinX + 1 + pad * 2,
+              h: bMaxY - bMinY + 1 + pad * 2
             }
           };
         }

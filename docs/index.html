@@ -1234,6 +1234,33 @@
                     </div>
                 </div>
 
+                <div class="r2">
+                    <div class="fg">
+                        <label class="fl">Layers</label>
+                        <select class="fs" id="azLayers">
+                            <option value="auto" selected>Auto</option>
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                            <option value="6">6</option>
+                            <option value="8">8</option>
+                            <option value="10">10</option>
+                            <option value="16">16</option>
+                            <option value="32">32</option>
+                        </select>
+                    </div>
+                    <div class="fg">
+                        <label class="fl">Mode</label>
+                        <select class="fs" id="azCompact">
+                            <option value="auto" selected>Auto</option>
+                            <option value="true">Compact</option>
+                            <option value="false">Full-range</option>
+                        </select>
+                    </div>
+                </div>
+
                 <div class="fg" style="margin-top:16px">
                     <button class="btn btn-p" id="genAzBtn" onclick="generate()">
                         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1530,6 +1557,26 @@
         const dmModeEl = $('dmMode');
         if (dmModeEl) dmModeEl.addEventListener('change', () => { if (currentMode === 'datamatrix') generate(); });
 
+        // Aztec mode change → regenerate + constrain layers
+        ['azLayers', 'azCompact'].forEach(id => {
+            const el = $(id); if (!el) return;
+            el.addEventListener('change', () => {
+                // When compact selected, limit layers to max 4
+                if (id === 'azCompact') {
+                    const isCompact = el.value === 'true';
+                    const layersSel = $('azLayers');
+                    Array.from(layersSel.options).forEach(opt => {
+                        if (opt.value === 'auto') return;
+                        opt.disabled = isCompact && parseInt(opt.value) > 4;
+                    });
+                    if (isCompact && layersSel.value !== 'auto' && parseInt(layersSel.value) > 4) {
+                        layersSel.value = '4';
+                    }
+                }
+                if (currentMode === 'aztec') generate();
+            });
+        });
+
         async function generate() {
             const myToken = ++_genToken;
             if (currentMode === 'barcode') return generateBarcode(myToken);
@@ -1690,7 +1737,17 @@
                 result.innerHTML = svg;
                 $('qrFrame').classList.remove('checker');
                 $('dlGrid').style.display = 'grid';
-                $('infoBar').style.display = 'none';
+
+                // Info bar
+                const bar = $('infoBar');
+                bar.style.display = 'flex';
+                const fmtName = { ean13:'EAN-13', ean8:'EAN-8', upca:'UPC-A', code128:'Code 128', code39:'Code 39', itf:'ITF-14' }[format] || format.toUpperCase();
+                bar.innerHTML = `
+                <span class="chip"><span class="dot dp"></span>${fmtName}</span>
+                <span class="chip"><span class="dot dc"></span>Data: ${data.length} chars</span>
+                <span class="chip"><span class="dot da"></span>Width: ${options.moduleWidth}px</span>
+                <span class="chip"><span class="dot de"></span>Height: ${options.height}px</span>
+                `;
                 
                 toast('Barcode generated instantly! ⚡');
             } catch(e) {
@@ -1734,6 +1791,12 @@
                 const mode = v('dmMode');
 
                 const svg = czQR.dataMatrix(data, { size, fg, bg, margin, mode, output: 'svg' });
+
+                // Extract module count from SVG viewBox
+                const vbMatch = svg.match(/viewBox="0 0 (\d+) (\d+)"/);
+                const dmCols = vbMatch ? parseInt(vbMatch[1]) - margin * 2 : '?';
+                const dmRows = vbMatch ? parseInt(vbMatch[2]) - margin * 2 : '?';
+
                 lastQR = { format: 'svg', matrix: null };
                 lastBC = { svg, format: 'svg', ext: 'svg' };
 
@@ -1741,7 +1804,17 @@
                 result.innerHTML = svg;
                 $('qrFrame').classList.remove('checker');
                 $('dlGrid').style.display = 'grid';
-                $('infoBar').style.display = 'none';
+
+                // Info bar
+                const bar = $('infoBar');
+                bar.style.display = 'flex';
+                const modeLabel = mode === 'auto' ? 'Auto' : mode.charAt(0).toUpperCase() + mode.slice(1);
+                bar.innerHTML = `
+                <span class="chip"><span class="dot dp"></span>ECC 200</span>
+                <span class="chip"><span class="dot dc"></span>Mode: ${modeLabel}</span>
+                <span class="chip"><span class="dot da"></span>${dmCols}×${dmRows} modules</span>
+                <span class="chip"><span class="dot de"></span>Data: ${data.length} chars</span>
+                `;
 
                 toast('Data Matrix generated instantly! ⚡');
             } catch (e) {
@@ -1783,8 +1856,24 @@
                 const fg = v('azFg');
                 const bg = v('azBg');
                 const ecPercent = parseInt(v('azEC'));
+                const layersVal = v('azLayers');
+                const compactVal = v('azCompact');
 
-                const svg = czQR.aztec(data, { size, fg, bg, margin: 1, ecPercent, output: 'svg' });
+                const opts = { size, fg, bg, margin: 1, ecPercent, output: 'svg' };
+                if (layersVal !== 'auto') opts.layers = parseInt(layersVal);
+                if (compactVal !== 'auto') opts.compact = compactVal === 'true';
+
+                // Generate matrix first to get actual info
+                const matOpts = Object.assign({}, opts, { output: 'matrix' });
+                const matrix = czQR.aztec(data, matOpts);
+                const modules = matrix.length;
+
+                // Decode the matrix to get actual layers/compact
+                const decoded = czQR.decodeAztec(matrix);
+                const actLayers = decoded ? decoded.layers : (opts.layers || '?');
+                const actCompact = decoded ? decoded.compact : (opts.compact !== undefined ? opts.compact : modules <= 27);
+
+                const svg = czQR.aztec(data, opts);
                 lastQR = { format: 'svg', matrix: null };
                 lastBC = { svg, format: 'svg', ext: 'svg' };
 
@@ -1792,7 +1881,16 @@
                 result.innerHTML = svg;
                 $('qrFrame').classList.remove('checker');
                 $('dlGrid').style.display = 'grid';
-                $('infoBar').style.display = 'none';
+
+                // Info bar
+                const bar = $('infoBar');
+                bar.style.display = 'flex';
+                bar.innerHTML = `
+                <span class="chip"><span class="dot dp"></span>${actCompact ? 'Compact' : 'Full-range'}</span>
+                <span class="chip"><span class="dot dc"></span>Layers: ${actLayers}</span>
+                <span class="chip"><span class="dot da"></span>${modules}×${modules} modules</span>
+                <span class="chip"><span class="dot de"></span>EC: ${ecPercent}%</span>
+                `;
 
                 toast('Aztec Code generated instantly! ⚡');
             } catch (e) {

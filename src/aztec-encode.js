@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════
-// aztec-encode.js — Aztec Code ECC200 generation
+// aztec-encode.js — Aztec Code generation (ISO/IEC 24778)
 // Based on ISO 24778 / etiket reference
 // ════════════════════════════════════════════════════════════════════════
 
@@ -141,6 +141,7 @@
 
   static aztec(data, options = {}) {
     let text = String(data);
+    if (text.length === 0) throw new Error("Aztec encoder: data must not be empty");
     let bytes = [];
     for (let i = 0; i < text.length; i++) {
       let code = text.codePointAt(i);
@@ -150,7 +151,7 @@
     
     let dataBits = czQR._az_encodeData(bytes);
     
-    let ecPercent = options.ecPercent || 33;
+    let ecPercent = options.ecPercent != null ? options.ecPercent : 33;
     let eccBits = Math.floor(dataBits.length * ecPercent / 100) + 11;
     let totalSizeBits = dataBits.length + eccBits;
     
@@ -163,30 +164,38 @@
     if (options.layers !== undefined) {
       symLayers = options.layers;
       isCompact = options.compact !== undefined ? options.compact : symLayers <= 4;
+      if (isCompact && symLayers > 4) throw new Error("Compact Aztec supports max 4 layers");
+      if (symLayers < 1 || symLayers > 32) throw new Error("Aztec layers must be 1-32");
       totalBitsInLayer = czQR._az_getTotalBitCapacity(symLayers, isCompact);
       wordSize = czQR._az_getWordSize(symLayers);
       stuffedBits = czQR._az_stuffBits(dataBits, wordSize);
+      let usableBits = totalBitsInLayer - (totalBitsInLayer % wordSize);
+      if (stuffedBits.length + eccBits > usableBits) throw new Error("Data too large for specified Aztec layers");
     } else {
-      for (let i = 0; i <= 32; i++) {
-        let compact = i <= 3;
-        let layers = compact ? i + 1 : i;
-        
-        // Exclude if options.compact says otherwise
-        if (compact && options.compact === false) continue;
-        if (!compact && options.compact === true) continue;
+      // Try compact 1-4, then full-range 1-32
+      const candidates = [];
+      if (options.compact !== false) {
+        for (let l = 1; l <= 4; l++) candidates.push({ layers: l, compact: true });
+      }
+      if (options.compact !== true) {
+        for (let l = 1; l <= 32; l++) candidates.push({ layers: l, compact: false });
+      }
+      // Sort by total module count (smallest first)
+      candidates.sort((a, b) => czQR._az_getModuleCount(a.layers, a.compact) - czQR._az_getModuleCount(b.layers, b.compact));
 
-        let curBitCap = czQR._az_getTotalBitCapacity(layers, compact);
+      for (const cand of candidates) {
+        let curBitCap = czQR._az_getTotalBitCapacity(cand.layers, cand.compact);
         if (totalSizeBits > curBitCap) continue;
         
-        let curWordSize = czQR._az_getWordSize(layers);
+        let curWordSize = czQR._az_getWordSize(cand.layers);
         let tryStuffed = czQR._az_stuffBits(dataBits, curWordSize);
         
         let usableBits = curBitCap - (curBitCap % curWordSize);
-        if (compact && tryStuffed.length > curWordSize * 64) continue;
+        if (cand.compact && tryStuffed.length > curWordSize * 64) continue;
         
         if (tryStuffed.length + eccBits <= usableBits) {
-          symLayers = layers;
-          isCompact = compact;
+          symLayers = cand.layers;
+          isCompact = cand.compact;
           wordSize = curWordSize;
           totalBitsInLayer = curBitCap;
           stuffedBits = tryStuffed;

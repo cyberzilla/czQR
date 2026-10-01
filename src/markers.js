@@ -134,6 +134,43 @@
 
         drawLabel('QR', bx, by);
 
+      } else if (r.format === 'aztec' && r.bounds && markerStyle !== 'none') {
+        const bx = mx(r.bounds.x), by = my(r.bounds.y);
+        const bw = r.bounds.w * scaleX, bh = r.bounds.h * scaleY;
+
+        // Fill
+        ctx.fillStyle = fillColor;
+        ctx.fillRect(bx, by, bw, bh);
+
+        // Corner brackets
+        ctx.lineWidth = lineWidth;
+        ctx.strokeStyle = lineColor;
+        drawCorners(bx, by, bw, bh);
+
+        // Bull's eye finder dot (like QR finder dots)
+        if (r.bullsEye && showQRDots) {
+          const bcx = mx(r.bullsEye.x), bcy = my(r.bullsEye.y);
+          const beR = r.bullsEye.radius * Math.min(scaleX, scaleY);
+          // Outer square ring (bull's eye is concentric squares)
+          ctx.strokeStyle = lineColor;
+          ctx.lineWidth = lineWidth * 1.5;
+          const sqSize = beR * 1.2;
+          ctx.strokeRect(bcx - sqSize / 2, bcy - sqSize / 2, sqSize, sqSize);
+          // Center dot
+          const dr = dotRadius * 1.8;
+          ctx.fillStyle = lineColor;
+          ctx.beginPath();
+          ctx.arc(bcx, bcy, dr, 0, Math.PI * 2);
+          ctx.fill();
+          // White inner
+          ctx.fillStyle = '#fff';
+          ctx.beginPath();
+          ctx.arc(bcx, bcy, dr * 0.4, 0, Math.PI * 2);
+          ctx.fill();
+        }
+
+        drawLabel('AZTEC', bx, by);
+
       } else if (r.bounds && markerStyle !== 'none') {
         const bx = mx(r.bounds.x), by = my(r.bounds.y);
         const bw = r.bounds.w * scaleX, bh = r.bounds.h * scaleY;

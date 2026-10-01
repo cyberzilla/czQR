@@ -22,7 +22,8 @@
       c.width = source.naturalWidth || source.width; c.height = source.naturalHeight || source.height;
       c.getContext('2d').drawImage(source, 0, 0);
       imgData = c.getContext('2d').getImageData(0, 0, c.width, c.height);
-    } else return [];
+    } else if (source && source.data && source.width && source.height) imgData = source;
+    else return [];
 
     const results = [];
     const addResult = (r) => {
@@ -113,8 +114,10 @@
           if (addResult(subRes)) earlyData.add(subRes.data);
         }
       }
+    } catch (e) {}
 
-      // Step 2d: Aztec
+    // Step 2d: Aztec
+    try {
       const azRes = czQR.readAztec(imgData);
       if (azRes && !earlyData.has(azRes.data)) {
         if (addResult(azRes)) earlyData.add(azRes.data);

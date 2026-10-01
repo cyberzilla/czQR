@@ -954,7 +954,7 @@
                     <button class="clear-img" id="btnClearImg" title="Remove image"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><line x1="6" y1="6" x2="18" y2="18"/><line x1="18" y1="6" x2="6" y2="18"/></svg></button>
                     <div class="loading-overlay" id="fileLoading" style="display:none">
                         <div class="spinner"></div>
-                        <span>Decoding QR code...</span>
+                        <span>Decoding...</span>
                     </div>
                 </div>
                 <div class="drop-zone" id="dropZone">
@@ -1391,7 +1391,16 @@
                     metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--cy)"></div>Mode: ${extra.modes.join(' → ')}</div>`;
                 }
                 if (extra && extra.symbol) {
-                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--em)"></div>Symbol: ${extra.symbol}</div>`;
+                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--em)"></div>Modules: ${extra.symbol}</div>`;
+                }
+                if (extra && extra.layers !== undefined) {
+                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--cy)"></div>Layers: ${extra.layers}</div>`;
+                }
+                if (extra && extra.compact !== undefined) {
+                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:var(--em)"></div>${extra.compact ? 'Compact' : 'Full-range'}</div>`;
+                }
+                if (extra && extra.checksumValid !== undefined) {
+                    metaHTML += `<div class="meta-chip"><div class="meta-dot" style="background:${extra.checksumValid ? 'var(--em)' : '#ef4444'}"></div>Checksum: ${extra.checksumValid ? '✓ Valid' : '✗ Invalid'}</div>`;
                 }
                 resultMeta.innerHTML = metaHTML;
 
@@ -1425,13 +1434,20 @@
                         if (url.protocol === 'http:' || url.protocol === 'https:')
                             linkBtn = ` <a href="${escHtml(r.data)}" target="_blank" rel="noopener" style="color:var(--cy);font-size:12px">🔗 Open</a>`;
                     } catch {}
+                    let extras = [];
+                    if (r.layers !== undefined) extras.push(`Layers: ${r.layers}`);
+                    if (r.compact !== undefined) extras.push(r.compact ? 'Compact' : 'Full-range');
+                    if (r.modes) extras.push(`Mode: ${r.modes.join(' → ')}`);
+                    if (r.symbol) extras.push(`Modules: ${r.symbol}`);
+                    if (r.checksumValid !== undefined) extras.push(`Checksum: ${r.checksumValid ? '✓' : '✗'}`);
+                    const extraLine = extras.length ? `<div style="color:var(--t2);font-size:11px;margin-top:4px;display:flex;gap:8px;flex-wrap:wrap">${extras.map(e => `<span style="background:rgba(255,255,255,0.05);padding:2px 6px;border-radius:4px">${e}</span>`).join('')}</div>` : '';
                     html += `<div style="background:rgba(255,255,255,0.03);border:1px solid var(--bdr);border-radius:10px;padding:16px;margin-bottom:12px;text-align:left;box-shadow:0 4px 12px rgba(0,0,0,0.1);">
                         <div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">
                             <span style="background:var(--cy);color:#000;border-radius:50%;width:22px;height:22px;display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:700">${i+1}</span>
                             <span style="font-weight:600;color:var(--t1)">${fmtLabel}</span>
                             <span style="color:var(--t2);font-size:12px">${type}</span>${linkBtn}
-                        </div>
-                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:14px;color:var(--em);cursor:pointer;background:rgba(16,185,129,0.08);padding:10px;border-radius:6px;border:1px solid rgba(16,185,129,0.2)" onclick="navigator.clipboard.writeText(this.textContent).then(()=>{this.style.opacity='0.5';setTimeout(()=>this.style.opacity='1',300)})">${escHtml(r.data)}</div>
+                        </div>${extraLine}
+                        <div style="word-break:break-all;font-family:'Fira Code',monospace;font-size:14px;color:var(--em);cursor:pointer;background:rgba(16,185,129,0.08);padding:10px;border-radius:6px;border:1px solid rgba(16,185,129,0.2);margin-top:6px" onclick="navigator.clipboard.writeText(this.textContent).then(()=>{this.style.opacity='0.5';setTimeout(()=>this.style.opacity='1',300)})">${escHtml(r.data)}</div>
                     </div>`;
                     // Add each to history
                     if (r.data !== lastResult) {
