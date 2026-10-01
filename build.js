@@ -22,6 +22,8 @@ const MODULES = [
   'barcode-encode.js',  // Barcode generation (placeholder)
   'datamatrix-encode.js', // Data Matrix ECC200 generation
   'datamatrix-decode.js', // Data Matrix ECC200 decoding
+  'aztec-encode.js',      // Aztec Code encoding
+  'aztec-decode.js',      // Aztec Code decoding
   'barcode-decode.js',  // Barcode reading (decoders)
   'readall.js',         // readAll() orchestrator + scanImageAll
   'markers.js',         // drawDetections() API

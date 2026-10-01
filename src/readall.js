@@ -113,6 +113,12 @@
           if (addResult(subRes)) earlyData.add(subRes.data);
         }
       }
+
+      // Step 2d: Aztec
+      const azRes = czQR.readAztec(imgData);
+      if (azRes && !earlyData.has(azRes.data)) {
+        if (addResult(azRes)) earlyData.add(azRes.data);
+      }
     } catch (e) {}
 
     // ═══ Step 3: Deep QR scan (only if multiple QR finder groups) ═══
