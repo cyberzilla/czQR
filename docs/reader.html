@@ -4,8 +4,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <meta name="description" content="czQR — Scan QR codes, Data Matrix & Barcodes from camera or image files using pure JavaScript.">
-    <title>czQR — QR Code, Data Matrix & Barcode Reader</title>
+    <meta name="description" content="czQR — Scan QR codes, Data Matrix, Aztec Codes & Barcodes from camera or image files using pure JavaScript.">
+    <title>czQR — QR Code, Data Matrix, Aztec Code & Barcode Reader</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
@@ -872,7 +872,7 @@
                 czQR Scanner
             </div>
             <h1>Scan QR & Barcodes</h1>
-            <p>Scan from your camera in real-time or upload an image to decode QR codes and 1D barcodes (EAN-13, Code-128, Code-39, and more).</p>
+            <p>Scan from your camera in real-time or upload an image to decode QR codes, Data Matrix, Aztec codes and 1D barcodes (EAN-13, Code-128, Code-39, and more).</p>
         </header>
 
         <div class="card anim ad1">
@@ -1011,7 +1011,7 @@
         </div>
 
         <footer class="footer">
-            czQR — QR Code, Data Matrix & Barcode Generator & Reader • Pure JavaScript • No Server Required • MIT License
+            czQR — QR Code, Data Matrix, Aztec Code & Barcode Generator & Reader • Pure JavaScript • No Server Required • MIT License
         </footer>
     </div>
 
@@ -1300,7 +1300,7 @@
                             // Show results
                             if (results.length === 1) {
                                 showResult(results[0].data, 'Camera', results[0].format, false, results[0]);
-                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : results[0].format === 'datamatrix' ? 'Data Matrix' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
+                                toast('✓ ' + (results[0].format === 'qr' ? 'QR Code' : results[0].format === 'datamatrix' ? 'Data Matrix' : results[0].format === 'aztec' ? 'Aztec Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']') + ' detected!');
                             } else {
                                 showMultiResults(results, 'Camera');
                                 toast('✓ ' + results.length + ' codes detected!');
@@ -1379,7 +1379,7 @@
                 // Meta info
                 const now = new Date();
                 const type = detectType(text);
-                const fmtLabel = format === 'qr' ? 'QR Code' : (format === 'datamatrix' ? 'DATA MATRIX' : (format || 'Unknown').toUpperCase());
+                const fmtLabel = format === 'qr' ? 'QR Code' : (format === 'datamatrix' ? 'DATA MATRIX' : format === 'aztec' ? 'AZTEC CODE' : (format || 'Unknown').toUpperCase());
                 let metaHTML = `
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--p)"></div>Format: ${fmtLabel}</div>
                     <div class="meta-chip"><div class="meta-dot" style="background:var(--cy)"></div>Type: ${type}</div>
@@ -1417,7 +1417,7 @@
                 let html = '';
                 const now = new Date();
                 results.forEach((r, i) => {
-                    const fmtLabel = r.format === 'qr' ? 'QR Code' : (r.format === 'datamatrix' ? 'DATA MATRIX' : (r.format || 'Unknown').toUpperCase());
+                    const fmtLabel = r.format === 'qr' ? 'QR Code' : (r.format === 'datamatrix' ? 'DATA MATRIX' : r.format === 'aztec' ? 'AZTEC CODE' : (r.format || 'Unknown').toUpperCase());
                     const type = detectType(r.data);
                     let linkBtn = '';
                     try {
@@ -1553,7 +1553,7 @@
                                 if (results.length > 0) {
                                     if (results.length === 1) {
                                         showResult(results[0].data, 'File', results[0].format, false, results[0]);
-                                        const fmtLabel = results[0].format === 'qr' ? 'QR Code' : results[0].format === 'datamatrix' ? 'Data Matrix' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']';
+                                        const fmtLabel = results[0].format === 'qr' ? 'QR Code' : results[0].format === 'datamatrix' ? 'Data Matrix' : results[0].format === 'aztec' ? 'Aztec Code' : 'Barcode [' + (results[0].format || '').toUpperCase() + ']';
                                         toast('✓ ' + fmtLabel + ' decoded!');
                                     } else {
                                         showMultiResults(results, 'File');
@@ -1590,7 +1590,7 @@
                                         drawDetections(imgDetectCtx, results, natW, natH, elW, elH, offX, offY, renderW, renderH);
                                     });
                                 } else {
-                                    toast('No QR code or barcode found in this image');
+                                    toast('No QR code, Data Matrix, Aztec or barcode found in this image');
                                 }
                             } catch (err) {
                                 console.warn('File decode error:', err);
