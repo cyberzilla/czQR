@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <meta name="description"
         content="czQR — Generate & Read QR codes, Data Matrix & Barcodes with custom shapes, finder styling, labels, and multiple formats — powered by pure JavaScript.">
-    <title>czQR — QR Code, Data Matrix & Barcode Generator & Reader</title>
+    <title>czQR — QR Code, Data Matrix, Aztec Code & Barcode Generator & Reader</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap"
@@ -917,6 +917,7 @@
                 <div class="tabs anim">
                     <button class="tab active" onclick="switchMode('qr');this.blur()">QR Code</button>
                     <button class="tab" onclick="switchMode('datamatrix');this.blur()">Data Matrix</button>
+                    <button class="tab" onclick="switchMode('aztec');this.blur()">Aztec</button>
                     <button class="tab" onclick="switchMode('barcode');this.blur()">Barcode</button>
                 </div>
                 
@@ -1194,6 +1195,57 @@
                 </div>
             </div>
 
+            <!-- Aztec Settings -->
+            <div class="card anim ad1 panel" id="azSettings">
+                <div class="ct">
+                    <div class="ico ico-p">◎</div> Aztec Settings
+                </div>
+
+                <div class="fg">
+                    <label class="fl">Content</label>
+                    <textarea class="ft" id="azData" placeholder="Enter text, URL, or data…">https://github.com/cyberzilla/czQR</textarea>
+                </div>
+
+                <div class="r2">
+                    <div class="fg">
+                        <label class="fl">Output Size: <span id="azs_v">300</span>px</label>
+                        <div class="rw"><input type="range" class="rs" id="azSize" min="100" max="800" value="300" step="10"><span class="rv" id="azs_b">300</span></div>
+                    </div>
+                    <div class="fg">
+                        <label class="fl">EC Level: <span id="aze_v">23</span>%</label>
+                        <div class="rw"><input type="range" class="rs" id="azEC" min="5" max="95" value="23" step="1"><span class="rv" id="aze_b">23</span></div>
+                    </div>
+                </div>
+
+                <div class="r2">
+                    <div class="fg">
+                        <label class="fl">Foreground</label>
+                        <div class="ci">
+                            <input type="color" class="cs" id="azFgSw" value="#000000">
+                            <input type="text" class="ch" id="azFg" value="#000000" maxlength="7">
+                        </div>
+                    </div>
+                    <div class="fg">
+                        <label class="fl">Background</label>
+                        <div class="ci">
+                            <input type="color" class="cs" id="azBgSw" value="#ffffff">
+                            <input type="text" class="ch" id="azBg" value="#ffffff" maxlength="7">
+                        </div>
+                    </div>
+                </div>
+
+                <div class="fg" style="margin-top:16px">
+                    <button class="btn btn-p" id="genAzBtn" onclick="generate()">
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                            <circle cx="12" cy="12" r="10"/>
+                            <circle cx="12" cy="12" r="6"/>
+                            <circle cx="12" cy="12" r="2"/>
+                        </svg>
+                        Generate Aztec Code
+                    </button>
+                </div>
+            </div>
+
             <!-- Barcode Settings -->
             <div class="card anim ad1 panel" id="bcSettings">
                 <div class="ct">
@@ -1358,7 +1410,7 @@
         });
 
         // Color sync
-        [['fgSw', 'fg'], ['bgSw', 'bg'], ['fcSw', 'fontColor'], ['finderOuterSw', 'finderOuterColor'], ['finderInnerSw', 'finderInnerColor'], ['dmFgSw', 'dmFg'], ['dmBgSw', 'dmBg']].forEach(([sw, hex]) => {
+        [['fgSw', 'fg'], ['bgSw', 'bg'], ['fcSw', 'fontColor'], ['finderOuterSw', 'finderOuterColor'], ['finderInnerSw', 'finderInnerColor'], ['dmFgSw', 'dmFg'], ['dmBgSw', 'dmBg'], ['azFgSw', 'azFg'], ['azBgSw', 'azBg']].forEach(([sw, hex]) => {
             const s = $(sw), h = $(hex); if (!s || !h) return;
             s.addEventListener('input', () => h.value = s.value);
             h.addEventListener('input', () => { if (/^#[0-9a-fA-F]{6}$/.test(h.value)) s.value = h.value; });
@@ -1398,7 +1450,7 @@
         let lastBC = null;
         let currentMode = 'qr';
         let _genToken = 0;
-        const _preview = { qr: null, datamatrix: null, barcode: null };
+        const _preview = { qr: null, datamatrix: null, aztec: null, barcode: null };
 
         function _savePreview() {
             // Convert canvas to img so innerHTML preserves pixel data
@@ -1447,10 +1499,11 @@
             currentMode = mode;
             const tabs = document.querySelectorAll('.tab');
             tabs.forEach(t => t.classList.remove('active'));
-            const idx = mode === 'qr' ? 0 : mode === 'datamatrix' ? 1 : 2;
+            const idx = mode === 'qr' ? 0 : mode === 'datamatrix' ? 1 : mode === 'aztec' ? 2 : 3;
             tabs[idx].classList.add('active');
             document.getElementById('qrSettings').classList.toggle('active', mode === 'qr');
             document.getElementById('dmSettings').classList.toggle('active', mode === 'datamatrix');
+            document.getElementById('azSettings').classList.toggle('active', mode === 'aztec');
             document.getElementById('bcSettings').classList.toggle('active', mode === 'barcode');
             _restorePreview(mode);
         }
@@ -1467,6 +1520,12 @@
             el.addEventListener('input', () => { if ($(a)) $(a).textContent = el.value; if ($(b)) $(b).textContent = el.value; });
         });
 
+        // Aztec Range sync
+        [['azSize', 'azs_v', 'azs_b'], ['azEC', 'aze_v', 'aze_b']].forEach(([id, a, b]) => {
+            const el = $(id); if (!el) return;
+            el.addEventListener('input', () => { if ($(a)) $(a).textContent = el.value; if ($(b)) $(b).textContent = el.value; });
+        });
+
         // Data Matrix mode change → regenerate
         const dmModeEl = $('dmMode');
         if (dmModeEl) dmModeEl.addEventListener('change', () => { if (currentMode === 'datamatrix') generate(); });
@@ -1475,6 +1534,7 @@
             const myToken = ++_genToken;
             if (currentMode === 'barcode') return generateBarcode(myToken);
             if (currentMode === 'datamatrix') return generateDataMatrix(myToken);
+            if (currentMode === 'aztec') return generateAztec(myToken);
             const text = v('text').trim();
             if (!text) { toast('Please enter content', true); return; }
 
@@ -1699,10 +1759,61 @@
             }
         }
 
+        async function generateAztec(myToken) {
+            const data = v('azData').trim();
+            if (!data) { toast('Please enter content', true); return; }
+
+            const btn = $('genAzBtn');
+            btn.disabled = true;
+            btn.innerHTML = '<div class="spin" style="display:inline-block;width:18px;height:18px;border-width:2px"></div> Generating…';
+
+            $('placeholder').style.display = 'none';
+            $('errMsg').style.display = 'none';
+
+            const loader = $('qrLoading');
+            loader.querySelector('.ld-text').textContent = 'Generating…';
+            loader.classList.add('active');
+            const _loadStart = Date.now();
+
+            await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+            try {
+                if (myToken !== _genToken) return;
+                const size = parseInt(v('azSize'));
+                const fg = v('azFg');
+                const bg = v('azBg');
+                const ecPercent = parseInt(v('azEC'));
+
+                const svg = czQR.aztec(data, { size, fg, bg, margin: 1, ecPercent, output: 'svg' });
+                lastQR = { format: 'svg', matrix: null };
+                lastBC = { svg, format: 'svg', ext: 'svg' };
+
+                const result = $('qrResult');
+                result.innerHTML = svg;
+                $('qrFrame').classList.remove('checker');
+                $('dlGrid').style.display = 'grid';
+                $('infoBar').style.display = 'none';
+
+                toast('Aztec Code generated instantly! ⚡');
+            } catch (e) {
+                $('qrResult').innerHTML = '';
+                $('dlGrid').style.display = 'none';
+                $('placeholder').style.display = 'flex';
+                toast(e.message, true);
+            } finally {
+                const elapsed = Date.now() - _loadStart;
+                const remaining = Math.max(0, 500 - elapsed);
+                await new Promise(r => setTimeout(r, remaining));
+                loader.classList.remove('active');
+                btn.disabled = false;
+                btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg> Generate Aztec Code';
+            }
+        }
+
         async function downloadAs(fmt) {
-            if (currentMode === 'barcode' || currentMode === 'datamatrix') {
+            if (currentMode === 'barcode' || currentMode === 'datamatrix' || currentMode === 'aztec') {
                 if(!lastBC) return;
-                const name = currentMode === 'datamatrix' ? 'datamatrix' : 'barcode';
+                const name = currentMode === 'datamatrix' ? 'datamatrix' : currentMode === 'aztec' ? 'aztec' : 'barcode';
                 if (fmt === 'svg') {
                     const blob = new Blob([lastBC.svg], {type: 'image/svg+xml'});
                     const url = URL.createObjectURL(blob);
@@ -1748,7 +1859,7 @@
         }
 
         async function copyURI() {
-            if (currentMode === 'barcode' || currentMode === 'datamatrix') {
+            if (currentMode === 'barcode' || currentMode === 'datamatrix' || currentMode === 'aztec') {
                 if(!lastBC) return;
                 const b64 = btoa(lastBC.svg);
                 const uri = `data:image/svg+xml;base64,${b64}`;
