@@ -59,6 +59,7 @@
     const mx = (px) => offX + px * scaleX;
     const my = (py) => offY + py * scaleY;
 
+    // Axis-aligned corner brackets (for barcode, DM, Aztec)
     const drawCorners = (x, y, w, h) => {
       const L = options.cornerLength || Math.min(Math.max(8, Math.min(w, h) * 0.2), 24);
       ctx.beginPath();
@@ -66,6 +67,15 @@
       ctx.moveTo(x + w - L, y); ctx.lineTo(x + w, y); ctx.lineTo(x + w, y + L);
       ctx.moveTo(x + w, y + h - L); ctx.lineTo(x + w, y + h); ctx.lineTo(x + w - L, y + h);
       ctx.moveTo(x + L, y + h); ctx.lineTo(x, y + h); ctx.lineTo(x, y + h - L);
+      ctx.stroke();
+    };
+
+    // Rotated corner bracket at point p, with arms along directions d1 and d2
+    const drawRotatedCorner = (p, d1, d2, armLen) => {
+      ctx.beginPath();
+      ctx.moveTo(p[0] + d1[0] * armLen, p[1] + d1[1] * armLen);
+      ctx.lineTo(p[0], p[1]);
+      ctx.lineTo(p[0] + d2[0] * armLen, p[1] + d2[1] * armLen);
       ctx.stroke();
     };
 
@@ -82,40 +92,61 @@
       ctx.fillText(text, x + pad, y - 1);
     };
 
+    // Normalize vector to unit length
+    const normalize = (dx, dy) => {
+      const len = Math.sqrt(dx * dx + dy * dy);
+      return len > 0 ? [dx / len, dy / len] : [0, 0];
+    };
+
     for (const r of results) {
       if (r.format === 'qr' && r.points && r.points.length >= 3) {
         const pts = r.points.map(p => [mx(p.x), my(p.y)]);
+        // 4th corner: p1 + p2 - p0 (parallelogram)
         const br = [pts[1][0] + pts[2][0] - pts[0][0], pts[1][1] + pts[2][1] - pts[0][1]];
 
-        // Module size in canvas pixels (average of 3 finders)
+        // Module size in canvas pixels
         const avgMs = (r.points[0].estModuleSize + r.points[1].estModuleSize + r.points[2].estModuleSize) / 3;
-        const expandX = avgMs * 3.5 * scaleX;
-        const expandY = avgMs * 3.5 * scaleY;
+        const ms = avgMs || 3;
 
-        // Compute bounding box from the 4 corners, expanded to QR outer edge
-        const allX = [pts[0][0], pts[1][0], pts[2][0], br[0]];
-        const allY = [pts[0][1], pts[1][1], pts[2][1], br[1]];
-        const bx = Math.max(0, Math.min(...allX) - expandX);
-        const by = Math.max(0, Math.min(...allY) - expandY);
-        const bw = Math.min(cw - bx, Math.max(...allX) - bx + expandX);
-        const bh = Math.min(ch - by, Math.max(...allY) - by + expandY);
+        // Module-vector expansion using edge directions from finder centers
+        // pt0=TL finder, pt1=TR finder, pt2=BL finder
+        // uX = unit direction along top edge (pt0→pt1), uY = unit direction along left edge (pt0→pt2)
+        const d01 = normalize(pts[1][0] - pts[0][0], pts[1][1] - pts[0][1]);
+        const d02 = normalize(pts[2][0] - pts[0][0], pts[2][1] - pts[0][1]);
+        const ex = ms * 4; // expansion: 3.5 modules + 0.5 quiet zone buffer
 
-        // Fill
+        // QR boundary corners (expanded outward from finder centers by ex modules)
+        const expanded = [
+          [pts[0][0] - d01[0] * ex - d02[0] * ex, pts[0][1] - d01[1] * ex - d02[1] * ex],  // TL
+          [pts[1][0] + d01[0] * ex - d02[0] * ex, pts[1][1] + d01[1] * ex - d02[1] * ex],  // TR
+          [br[0]     + d01[0] * ex + d02[0] * ex, br[1]     + d01[1] * ex + d02[1] * ex],  // BR
+          [pts[2][0] - d01[0] * ex + d02[0] * ex, pts[2][1] - d01[1] * ex + d02[1] * ex],  // BL
+        ];
+
+        // Fill rotated quad
         ctx.fillStyle = fillColor;
         ctx.beginPath();
-        ctx.moveTo(pts[0][0], pts[0][1]);
-        ctx.lineTo(pts[1][0], pts[1][1]);
-        ctx.lineTo(br[0], br[1]);
-        ctx.lineTo(pts[2][0], pts[2][1]);
+        ctx.moveTo(expanded[0][0], expanded[0][1]);
+        ctx.lineTo(expanded[1][0], expanded[1][1]);
+        ctx.lineTo(expanded[2][0], expanded[2][1]);
+        ctx.lineTo(expanded[3][0], expanded[3][1]);
         ctx.closePath();
         ctx.fill();
 
-        // Corner brackets (same style as barcodes)
+        // Rotated corner brackets at each expanded corner
         ctx.lineWidth = lineWidth;
         ctx.strokeStyle = lineColor;
-        drawCorners(bx, by, bw, bh);
+        const armLen = options.cornerLength || Math.min(Math.max(10, ms * 5), 30);
+        for (let i = 0; i < 4; i++) {
+          const prev = expanded[(i + 3) % 4];
+          const curr = expanded[i];
+          const next = expanded[(i + 1) % 4];
+          const a1 = normalize(prev[0] - curr[0], prev[1] - curr[1]);
+          const a2 = normalize(next[0] - curr[0], next[1] - curr[1]);
+          drawRotatedCorner(curr, a1, a2, armLen);
+        }
 
-        // 3 finder pattern dots (larger, prominent)
+        // 3 finder pattern dots
         if (showQRDots) {
           const dr = dotRadius * 1.5;
           ctx.fillStyle = lineColor;
@@ -123,7 +154,6 @@
             ctx.beginPath();
             ctx.arc(pts[i][0], pts[i][1], dr, 0, Math.PI * 2);
             ctx.fill();
-            // White inner circle
             ctx.fillStyle = '#fff';
             ctx.beginPath();
             ctx.arc(pts[i][0], pts[i][1], dr * 0.45, 0, Math.PI * 2);
@@ -132,7 +162,23 @@
           }
         }
 
-        drawLabel('QR', bx, by);
+        // Rotated label at TL corner
+        if (showLabels) {
+          const angle = Math.atan2(d01[1], d01[0]);
+          ctx.save();
+          ctx.translate(expanded[0][0], expanded[0][1]);
+          ctx.rotate(angle);
+          ctx.font = labelFont;
+          const tw = ctx.measureText('QR').width;
+          const pad = 3;
+          ctx.fillStyle = labelBg;
+          ctx.beginPath();
+          ctx.roundRect(0, -14, tw + pad * 2, 14, 3);
+          ctx.fill();
+          ctx.fillStyle = labelColor;
+          ctx.fillText('QR', pad, -2);
+          ctx.restore();
+        }
 
       } else if (r.format === 'aztec' && r.bounds && markerStyle !== 'none') {
         const bx = mx(r.bounds.x), by = my(r.bounds.y);

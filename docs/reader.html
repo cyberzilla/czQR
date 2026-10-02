@@ -287,6 +287,16 @@
             content: none
         }
 
+        .cam-wrap canvas.snap-canvas {
+            display: none;
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 1
+        }
+
         .cam-wrap canvas.detect-canvas {
             display: block;
             position: absolute;
@@ -903,6 +913,7 @@
                 <div class="cam-wrap" id="camWrap" style="display:none">
                     <video id="camVideo" playsinline autoplay muted></video>
                     <canvas id="camCanvas"></canvas>
+                    <canvas class="snap-canvas" id="snapCanvas"></canvas>
                     <canvas class="detect-canvas" id="detectCanvas"></canvas>
                     <div class="scan-overlay">
                         <div class="scan-box">
@@ -1050,6 +1061,8 @@
             const scanOverlay = document.querySelector('.scan-overlay');
             const detectCanvas = document.getElementById('detectCanvas');
             const detectCtx = detectCanvas.getContext('2d');
+            const snapCanvas = document.getElementById('snapCanvas');
+            const snapCtx = snapCanvas.getContext('2d');
             const dropZone = document.getElementById('dropZone');
             const fileInput = document.getElementById('fileInput');
             const imgPreview = document.getElementById('imgPreview');
@@ -1095,6 +1108,9 @@
             let scanRAF = null;
             let lastScanTime = 0;
             let multiScanMode = false; // false = fast single scan, true = readAll
+            let _lastPendingData = '';
+            let _confirmCount = 0;
+            let _pendingResults = [];
 
             // Pause scanning when tab is backgrounded
             document.addEventListener('visibilitychange', () => {
@@ -1151,6 +1167,7 @@
                     stream = null;
                 }
                 video.srcObject = null;
+                snapCanvas.style.display = 'none';
                 camWrap.style.display = 'none';
                 camMsg.style.display = 'block';
                 btnStart.style.display = 'flex';
@@ -1162,6 +1179,15 @@
             function pauseScanning() {
                 scanning = false;
                 if (scanRAF) { cancelAnimationFrame(scanRAF); scanRAF = null; }
+                // Snap: use the already-captured canvas frame (same frame that was analyzed)
+                const vw = canvas.width, vh = canvas.height;
+                if (vw && vh) {
+                    snapCanvas.width = vw;
+                    snapCanvas.height = vh;
+                    snapCtx.drawImage(canvas, 0, 0);
+                    snapCanvas.style.display = 'block';
+                    video.pause();
+                }
                 btnScanAgain.style.display = 'flex';
                 scanOverlay.classList.add('scan-success');
                 // Haptic feedback
@@ -1171,8 +1197,13 @@
             function resumeScanning() {
                 btnScanAgain.style.display = 'none';
                 scanOverlay.classList.remove('scan-success');
+                snapCanvas.style.display = 'none';
+                video.play();
                 detectCtx.clearRect(0, 0, detectCanvas.width, detectCanvas.height);
                 lastResult = '';
+                _lastPendingData = '';
+                _confirmCount = 0;
+                _pendingResults = [];
                 scanning = true;
                 lastScanTime = 0;
                 scanRAF = requestAnimationFrame(scanFrame);
@@ -1236,13 +1267,30 @@
                         } else {
                             const r = czQR.read(imageData);
                             if (r && r.data) results = [r];
-                            // Also try Data Matrix if no QR/barcode found
-                            if (!results.length) {
-                                try {
-                                    const dm = czQR.readDataMatrix(imageData);
-                                    if (dm && dm.data) results = [dm];
-                                } catch(e) {}
+                        }
+
+                        // Confirmation: require same data in 2 consecutive frames
+                        // to eliminate false positives from random patterns
+                        if (results.length > 0) {
+                            const newData = results.map(r => r.data).sort().join('\0');
+                            if (newData === _lastPendingData) {
+                                _confirmCount++;
+                            } else {
+                                _lastPendingData = newData;
+                                _confirmCount = 1;
+                                _pendingResults = results;
                             }
+                            if (_confirmCount < 2) {
+                                // Not yet confirmed, continue scanning
+                                results = [];
+                            } else {
+                                results = _pendingResults;
+                                _lastPendingData = '';
+                                _confirmCount = 0;
+                            }
+                        } else {
+                            _lastPendingData = '';
+                            _confirmCount = 0;
                         }
 
                         // Clear detection overlay
@@ -1255,8 +1303,8 @@
                         detectCtx.clearRect(0, 0, detectCanvas.width, detectCanvas.height);
 
                         if (results.length > 0) {
-                            // Map ROI coordinates → display coordinates
-                            // video uses object-fit: cover on a 1:1 container
+                            // Map ROI coordinates → direct canvas pixel coordinates
+                            // Video uses object-fit: cover on a 1:1 container
                             const vidAspect = vw / vh;
                             const wrapAspect = dw / dh;
                             let vidDispW, vidDispH, vidOffX, vidOffY;
@@ -1271,30 +1319,41 @@
                                 vidOffX = 0;
                                 vidOffY = -(vidDispH - dh) / 2;
                             }
-                            const mapX = (rx) => vidOffX + (sx + rx / scale) / vw * vidDispW;
-                            const mapY = (ry) => vidOffY + (sy + ry / scale) / vh * vidDispH;
+                            // ROI pixel → canvas pixel
+                            const toCanvasX = (rx) => vidOffX + (sx + rx / scale) / vw * vidDispW;
+                            const toCanvasY = (ry) => vidOffY + (sy + ry / scale) / vh * vidDispH;
+                            const scaleToCanvas = vidDispW / (vw * scale);
 
-                            // Map results to display coords for marker drawing
                             const mappedResults = results.map(r => {
                                 if (r.format === 'qr' && r.points && r.points.length >= 3) {
                                     return { ...r, points: r.points.map(p => ({
-                                        x: (sx + p.x / scale) / vw * vidDispW,
-                                        y: (sy + p.y / scale) / vh * vidDispH
+                                        x: toCanvasX(p.x),
+                                        y: toCanvasY(p.y),
+                                        estModuleSize: (p.estModuleSize || 3) * scaleToCanvas
                                     }))};
                                 } else if (r.bounds) {
-                                    const bx2 = (sx + r.bounds.x / scale) / vw * vidDispW;
-                                    const by2 = (sy + r.bounds.y / scale) / vh * vidDispH;
-                                    const bw2 = (sx + (r.bounds.x + r.bounds.w) / scale) / vw * vidDispW - bx2;
-                                    const bh2 = (sy + (r.bounds.y + r.bounds.h) / scale) / vh * vidDispH - by2;
-                                    return { ...r, bounds: { x: bx2, y: by2, w: bw2, h: bh2 }};
+                                    const mx1 = toCanvasX(r.bounds.x);
+                                    const my1 = toCanvasY(r.bounds.y);
+                                    const mx2 = toCanvasX(r.bounds.x + r.bounds.w);
+                                    const my2 = toCanvasY(r.bounds.y + r.bounds.h);
+                                    const mapped = { ...r, bounds: { x: mx1, y: my1, w: mx2 - mx1, h: my2 - my1 }};
+                                    if (r.bullsEye) {
+                                        mapped.bullsEye = {
+                                            x: toCanvasX(r.bullsEye.x),
+                                            y: toCanvasY(r.bullsEye.y),
+                                            radius: r.bullsEye.radius * scaleToCanvas
+                                        };
+                                    }
+                                    return mapped;
                                 }
                                 return r;
                             });
+                            // Identity transform — coordinates are already in canvas pixels
                             czQR.drawDetections(detectCtx, mappedResults, {
-                                imgWidth: vidDispW, imgHeight: vidDispH,
+                                imgWidth: detectCanvas.width, imgHeight: detectCanvas.height,
                                 canvasWidth: detectCanvas.width, canvasHeight: detectCanvas.height,
-                                offsetX: vidOffX, offsetY: vidOffY,
-                                showLabels: false
+                                offsetX: 0, offsetY: 0,
+                                showLabels: true
                             });
 
                             // Show results
