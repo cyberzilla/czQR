@@ -611,18 +611,29 @@
    *  indicating a 180° rotated barcode. Normal barcodes return null
    *  so they use the standard axis-aligned bounds marker. */
   static _bc_detectOrientation(imgData, bounds, reversed) {
-    // Normal (non-reversed) barcodes: axis-aligned bounds are already correct
-    if (!reversed) return null;
-
-    // Upside-down barcode: flip corners 180° around bounds center
     const bx = bounds.x, by = bounds.y, bw = bounds.w, bh = bounds.h;
+
+    if (reversed) {
+      // Upside-down barcode: flip corners 180° around bounds center
+      return {
+        angle: Math.PI,
+        corners: [
+          { x: bx + bw, y: by + bh },  // TL of oriented barcode = BR of bounds
+          { x: bx,      y: by + bh },  // TR of oriented barcode = BL of bounds
+          { x: bx,      y: by      },  // BR of oriented barcode = TL of bounds
+          { x: bx + bw, y: by      },  // BL of oriented barcode = TR of bounds
+        ]
+      };
+    }
+
+    // Normal barcode: axis-aligned corners from bounds (TL, TR, BR, BL)
     return {
-      angle: Math.PI,
+      angle: 0,
       corners: [
-        { x: bx + bw, y: by + bh },  // TL of oriented barcode = BR of bounds
-        { x: bx,      y: by + bh },  // TR of oriented barcode = BL of bounds
-        { x: bx,      y: by      },  // BR of oriented barcode = TL of bounds
-        { x: bx + bw, y: by      },  // BL of oriented barcode = TR of bounds
+        { x: bx,      y: by      },  // TL
+        { x: bx + bw, y: by      },  // TR
+        { x: bx + bw, y: by + bh },  // BR
+        { x: bx,      y: by + bh },  // BL
       ]
     };
   }

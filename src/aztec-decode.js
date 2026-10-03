@@ -580,6 +580,14 @@
           const pad = Math.round(modSize * 0.3);
           const bullsEyeRadius = (isCompact ? 5 : 7) * modSize;
 
+          // Corners for rotated marker rendering (TL, TR, BR, BL)
+          // Aztec is scanned axis-aligned, so corners follow bounds
+          const cPad = Math.round(modSize * 0.5);
+          const cX1 = Math.max(0, bMinX - cPad);
+          const cY1 = Math.max(0, bMinY - cPad);
+          const cX2 = Math.min(w - 1, bMaxX + cPad);
+          const cY2 = Math.min(h - 1, bMaxY + cPad);
+
           return {
             data: decoded.data,
             format: 'aztec',
@@ -587,6 +595,13 @@
             layers: decoded.layers,
             compact: decoded.compact,
             bullsEye: { x: cx, y: cy, radius: bullsEyeRadius },
+            angle: 0,
+            corners: [
+              { x: cX1, y: cY1 },  // TL
+              { x: cX2, y: cY1 },  // TR
+              { x: cX2, y: cY2 },  // BR
+              { x: cX1, y: cY2 },  // BL
+            ],
             bounds: {
               x: Math.max(0, bMinX - pad),
               y: Math.max(0, bMinY - pad),
