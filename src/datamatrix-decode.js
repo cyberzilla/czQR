@@ -334,7 +334,8 @@
           const decoded = czQR.decodeDataMatrix(res.matrix);
           if (decoded && decoded.data) return {
             data: decoded.data, format: 'datamatrix', type: '2d',
-            modes: decoded.modes, symbol: decoded.symbol, bounds: res.bounds
+            modes: decoded.modes, symbol: decoded.symbol, bounds: res.bounds,
+            corners: res.corners || null
           };
         } catch(e) {}
       }
@@ -473,6 +474,19 @@
     }
     const pad = Math.round(Math.min(leftLen / finalRows, botLen / finalCols) * 0.1);
 
+    // Compute corner-based expansion for rotated marker rendering
+    // The 4 detected quadrilateral corners: TL, TR, BR, BL
+    // Expand each corner outward by pad along the edge directions
+    const cPad = Math.round(Math.min(leftLen / finalRows, botLen / finalCols) * 0.5);
+    // Edge direction vectors (unnormalized)
+    const topDx = trX - tlX, topDy = trY - tlY;
+    const leftDx = blX - tlX, leftDy = blY - tlY;
+    const topLen = Math.sqrt(topDx * topDx + topDy * topDy) || 1;
+    const leftLenN = Math.sqrt(leftDx * leftDx + leftDy * leftDy) || 1;
+    // Unit vectors along top edge and left edge
+    const utx = topDx / topLen, uty = topDy / topLen;
+    const ulx = leftDx / leftLenN, uly = leftDy / leftLenN;
+
     return {
       matrix,
       bounds: {
@@ -480,7 +494,13 @@
         y: Math.max(0, bMinY - pad),
         w: bMaxX - bMinX + 1 + pad * 2,
         h: bMaxY - bMinY + 1 + pad * 2
-      }
+      },
+      corners: [
+        { x: tlX - utx * cPad - ulx * cPad, y: tlY - uty * cPad - uly * cPad },  // TL (expanded)
+        { x: trX + utx * cPad - ulx * cPad, y: trY + uty * cPad - uly * cPad },  // TR (expanded)
+        { x: brX + utx * cPad + ulx * cPad, y: brY + uty * cPad + uly * cPad },  // BR (expanded)
+        { x: blX - utx * cPad + ulx * cPad, y: blY - uty * cPad + uly * cPad },  // BL (expanded)
+      ]
     };
   }
 

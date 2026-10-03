@@ -579,6 +579,7 @@
           }
           const pad = Math.round(modSize * 0.3);
           const bullsEyeRadius = (isCompact ? 5 : 7) * modSize;
+
           return {
             data: decoded.data,
             format: 'aztec',

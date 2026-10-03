@@ -70,6 +70,8 @@
       let result = czQR._bc_decodeScanline(runs, formats);
       if (result) {
         result.bounds = calcBounds();
+        const ori = czQR._bc_detectOrientation(imgData, result.bounds, false);
+        if (ori) { result.angle = ori.angle; result.corners = ori.corners; }
         return result;
       }
 
@@ -78,6 +80,8 @@
       result = czQR._bc_decodeScanline(reversedRuns, formats);
       if (result) {
         result.bounds = calcBounds();
+        const ori = czQR._bc_detectOrientation(imgData, result.bounds, true);
+        if (ori) { result.angle = ori.angle; result.corners = ori.corners; }
         return result;
       }
     }
@@ -601,5 +605,26 @@
 
   static _bc_decodeCodabar(runs) { return null; }
   static _bc_parseGS1(data) { return data; }
+
+  /** @internal Compute rotated corners for upside-down barcodes.
+   *  Only returns corners when the barcode is reversed (read right-to-left),
+   *  indicating a 180° rotated barcode. Normal barcodes return null
+   *  so they use the standard axis-aligned bounds marker. */
+  static _bc_detectOrientation(imgData, bounds, reversed) {
+    // Normal (non-reversed) barcodes: axis-aligned bounds are already correct
+    if (!reversed) return null;
+
+    // Upside-down barcode: flip corners 180° around bounds center
+    const bx = bounds.x, by = bounds.y, bw = bounds.w, bh = bounds.h;
+    return {
+      angle: Math.PI,
+      corners: [
+        { x: bx + bw, y: by + bh },  // TL of oriented barcode = BR of bounds
+        { x: bx,      y: by + bh },  // TR of oriented barcode = BL of bounds
+        { x: bx,      y: by      },  // BR of oriented barcode = TL of bounds
+        { x: bx + bw, y: by      },  // BL of oriented barcode = TR of bounds
+      ]
+    };
+  }
 
 

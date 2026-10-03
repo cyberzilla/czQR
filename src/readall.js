@@ -111,6 +111,9 @@
             subRes.bounds.x += rx;
             subRes.bounds.y += ry;
           }
+          if (subRes.corners) {
+            for (const c of subRes.corners) { c.x += rx; c.y += ry; }
+          }
           if (addResult(subRes)) earlyData.add(subRes.data);
         }
       }
@@ -199,7 +202,11 @@
           earlyData.delete(bc.data);
           if (bc.bounds) {
             const existing = results.find(r => r.data === bc.data && r.format !== 'qr');
-            if (existing) existing.bounds = bc.bounds;
+            if (existing) {
+              existing.bounds = bc.bounds;
+              if (bc.corners) existing.corners = bc.corners;
+              if (bc.angle !== undefined) existing.angle = bc.angle;
+            }
           }
           continue;
         }
@@ -402,6 +409,11 @@
           if (Math.abs(f.y - yFrac) < DEDUP_DIST) return;
         }
       }
+      // Detect barcode orientation (bar tilt + reading direction)
+      if (r.bounds && r.type === '1d') {
+        const ori = czQR._bc_detectOrientation(imgData, r.bounds, !!r.reversed);
+        if (ori) { r.angle = ori.angle; r.corners = ori.corners; }
+      }
       results.push(r);
       foundAt.push({ data: r.data, y: yFrac, bounds });
     };
@@ -478,6 +490,7 @@
         const lw = runs._leadingWhite || 0;
         const r1 = czQR._bc_decodeScanline(runs, formats);
         if (r1) {
+          r1.reversed = false;
           const b = (typeof r1.startPx === 'number') ? findBounds(lw + r1.startPx, lw + r1.endPx) : findBounds(0, w);
           addIfValid(r1, yFrac, b);
         }
@@ -485,6 +498,7 @@
         revRuns._leadingWhite = 0;
         const r2 = czQR._bc_decodeScanline(revRuns, formats);
         if (r2) {
+          r2.reversed = true;
           const totalPx = runs.reduce((s, r) => s + r.len, 0);
           const b = (typeof r2.startPx === 'number') ? findBounds(totalPx - r2.endPx, totalPx - r2.startPx) : findBounds(0, w);
           addIfValid(r2, yFrac, b);
